@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import EmailVerification, User
+from .models import StudentProfile, TeacherProfile, User
 
 
 @admin.register(User)
@@ -108,36 +108,85 @@ class UserAdmin(BaseUserAdmin):
     )
 
 
-@admin.register(EmailVerification)
-class EmailVerificationAdmin(admin.ModelAdmin):
+@admin.register(TeacherProfile)
+class TeacherProfileAdmin(admin.ModelAdmin):
     """
-    Admin configuration for inspecting EmailVerification records.
+    Admin configuration for TeacherProfile.
     """
 
     list_display = (
-        "id",
-        "user",
-        "is_used",
-        "attempts",
-        "expires_at",
+        "employee_code",
+        "get_username",
+        "get_full_name",
+        "department",
+        "designation",
+        "status",
+        "joining_date",
         "created_at",
     )
     list_filter = (
-        "is_used",
-        "created_at",
-        "expires_at",
+        "status",
+        "department",
+        "designation",
     )
     search_fields = (
+        "employee_code",
         "user__username",
         "user__email",
-    )
-    readonly_fields = (
-        "id",
-        "user",
-        "otp_hash",
-        "expires_at",
-        "is_used",
-        "attempts",
-        "created_at",
+        "user__first_name",
+        "user__last_name",
+        "designation",
     )
     ordering = ("-created_at",)
+    readonly_fields = ("id", "created_at", "updated_at")
+
+    @admin.display(description="Username")
+    def get_username(self, obj):
+        return obj.user.username
+
+    @admin.display(description="Full Name")
+    def get_full_name(self, obj):
+        return obj.user.get_full_name() or "-"
+
+
+@admin.register(StudentProfile)
+class StudentProfileAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for StudentProfile.
+    """
+
+    list_display = (
+        "student_code",
+        "roll_number",
+        "get_username",
+        "get_full_name",
+        "division",
+        "batch",
+        "admission_year",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "division__semester__program",
+        "division",
+        "admission_year",
+    )
+    search_fields = (
+        "student_code",
+        "roll_number",
+        "user__username",
+        "user__email",
+        "user__first_name",
+        "user__last_name",
+    )
+    ordering = ("division", "roll_number")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+    @admin.display(description="Username")
+    def get_username(self, obj):
+        return obj.user.username
+
+    @admin.display(description="Full Name")
+    def get_full_name(self, obj):
+        return obj.user.get_full_name() or "-"
