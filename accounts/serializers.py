@@ -1,12 +1,19 @@
+import re
 from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.contrib.auth.tokens import default_token_generator
+from django.db import transaction
 from django.utils.encoding import force_str
 from django.utils.http import urlsafe_base64_decode
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import User
+from .services import (
+    create_email_verification,
+    generate_otp,
+    send_otp_email,
+)
 from .validators import (
     normalize_email,
     normalize_indian_phone,
@@ -35,6 +42,7 @@ class UserSerializer(serializers.ModelSerializer):
             "last_name",
             "phone",
             "role",
+            "email_verified",
             "is_active",
             "created_at",
             "updated_at",
@@ -42,6 +50,7 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = [
             "id",
             "role",
+            "email_verified",
             "is_active",
             "created_at",
             "updated_at",
@@ -52,7 +61,7 @@ class UserUpdateSerializer(serializers.ModelSerializer):
     """
     Serializer for updating user profile via /me/ endpoint.
     Strictly permits only first_name, last_name, and phone.
-    Role, is_active, username, and email are strictly protected and cannot be changed here.
+    Role, is_active, email_verified, username, and email are strictly protected and cannot be changed here.
     """
 
     first_name = serializers.CharField(
@@ -107,14 +116,19 @@ class UserUpdateSerializer(serializers.ModelSerializer):
 
 class LoginSerializer(serializers.Serializer):
     """
-    Serializer for authenticating users via username or email and password.
+    Serializer for authenticating users via email or username and password.
     Returns JWT tokens along with the user's role and profile details.
     """
 
-    username = serializers.CharField(
-        required=True,
+    identifier = serializers.CharField(
+        required=False,
         write_only=True,
-        help_text="Enter your username or email address",
+        help_text="Enter your email address or username",
+    )
+    username = serializers.CharField(
+        required=False,
+        write_only=True,
+        help_text="Enter your username or email address (legacy field)",
     )
     password = serializers.CharField(
         required=True,
@@ -124,8 +138,13 @@ class LoginSerializer(serializers.Serializer):
     )
 
     def validate(self, attrs):
-        raw_identifier = attrs.get("username", "")
-        identifier = raw_identifier.strip()
+        raw_identifier = attrs.get("identifier") or attrs.get("username")
+        if not raw_identifier or not str(raw_identifier).strip():
+            raise serializers.ValidationError(
+                {"identifier": "Username or email is required."}
+            )
+
+        identifier = str(raw_identifier).strip()
         password = attrs.get("password")
 
         user = None
@@ -134,21 +153,24 @@ class LoginSerializer(serializers.Serializer):
         if "@" in identifier:
             email_normalized = normalize_email(identifier)
             try:
-                user_obj = User.objects.get(email__iexact=email_normalized)
-                user = authenticate(username=user_obj.username, password=password)
+                user = User.objects.get(email__iexact=email_normalized)
             except User.DoesNotExist:
                 user = None
         else:
             username_normalized = normalize_username(identifier)
             try:
-                user_obj = User.objects.get(username__iexact=username_normalized)
-                user = authenticate(username=user_obj.username, password=password)
+                user = User.objects.get(username__iexact=username_normalized)
             except User.DoesNotExist:
                 user = None
 
-        if not user:
+        if not user or not user.check_password(password):
             raise serializers.ValidationError(
                 "Invalid credentials. Please check your username/email and password."
+            )
+
+        if user.role == User.Role.STUDENT and not user.email_verified:
+            raise serializers.ValidationError(
+                "Please verify your email before logging in."
             )
 
         if not user.is_active:
@@ -175,6 +197,128 @@ class LoginSerializer(serializers.Serializer):
             "access": str(refresh.access_token),
             "refresh": str(refresh),
         }
+
+
+class StudentRegisterSerializer(serializers.Serializer):
+    """
+    Serializer for student self-registration.
+    Strictly forces role to STUDENT and initiates email OTP verification.
+    """
+
+    username = serializers.CharField(
+        required=True,
+        validators=[validate_username_custom],
+    )
+    email = serializers.CharField(
+        required=True,
+        validators=[validate_email_custom],
+    )
+    password = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={"input_type": "password"},
+    )
+    confirm_password = serializers.CharField(
+        required=True,
+        write_only=True,
+        style={"input_type": "password"},
+    )
+
+    def validate_username(self, value):
+        cleaned = normalize_username(value)
+        validate_username_custom(cleaned)
+        if User.objects.filter(username__iexact=cleaned).exists():
+            raise serializers.ValidationError(
+                "A user with that username already exists."
+            )
+        return cleaned
+
+    def validate_email(self, value):
+        cleaned = normalize_email(value)
+        validate_email_custom(cleaned)
+        if User.objects.filter(email__iexact=cleaned).exists():
+            raise serializers.ValidationError(
+                "A user with that email already exists."
+            )
+        return cleaned
+
+    def validate(self, attrs):
+        # Reject if client attempts to manipulate role
+        if "role" in self.initial_data:
+            raise serializers.ValidationError(
+                {"role": "Role cannot be specified during student registration."}
+            )
+
+        password = attrs.get("password")
+        confirm_password = attrs.get("confirm_password")
+
+        if password != confirm_password:
+            raise serializers.ValidationError(
+                {"confirm_password": "Passwords do not match."}
+            )
+
+        # Validate with Django password validators
+        validate_password(password)
+
+        return attrs
+
+    def create(self, validated_data):
+        with transaction.atomic():
+            user = User.objects.create_user(
+                username=validated_data["username"],
+                email=validated_data["email"],
+                password=validated_data["password"],
+                role=User.Role.STUDENT,
+                email_verified=False,
+                is_active=False,
+            )
+            otp = generate_otp()
+            create_email_verification(user, otp)
+            transaction.on_commit(lambda: send_otp_email(user.email, otp))
+            return user
+
+
+class StudentVerifyEmailSerializer(serializers.Serializer):
+    """
+    Serializer for verifying student email with 6-digit OTP.
+    """
+
+    email = serializers.CharField(
+        required=True,
+        validators=[validate_email_custom],
+    )
+    otp = serializers.CharField(
+        required=True,
+        min_length=6,
+        max_length=6,
+    )
+
+    def validate_email(self, value):
+        cleaned = normalize_email(value)
+        validate_email_custom(cleaned)
+        return cleaned
+
+    def validate_otp(self, value):
+        cleaned = value.strip() if isinstance(value, str) else str(value)
+        if not re.fullmatch(r"^\d{6}$", cleaned):
+            raise serializers.ValidationError("OTP must be exactly 6 digits.")
+        return cleaned
+
+
+class StudentResendOTPSerializer(serializers.Serializer):
+    """
+    Serializer for requesting a new verification OTP.
+    """
+
+    email = serializers.CharField(
+        required=True,
+        validators=[validate_email_custom],
+    )
+
+    def validate_email(self, value):
+        cleaned = normalize_email(value)
+        validate_email_custom(cleaned)
+        return cleaned
 
 
 class LogoutSerializer(serializers.Serializer):
@@ -238,7 +382,7 @@ class ChangePasswordSerializer(serializers.Serializer):
                 {"new_password": "New password cannot be the same as the old password."}
             )
 
-        # Validate with Django's password validation rules (similarity, min length, common password, numeric)
+        # Validate with Django's password validation rules
         user = self.context["request"].user
         validate_password(new_password, user=user)
 
@@ -267,7 +411,7 @@ class ForgotPasswordSerializer(serializers.Serializer):
         validate_email_custom(cleaned_email)
         try:
             user = User.objects.get(email__iexact=cleaned_email)
-            if user.is_active:
+            if user.is_active and (user.role != User.Role.STUDENT or user.email_verified):
                 self.context["user"] = user
             else:
                 self.context["user"] = None

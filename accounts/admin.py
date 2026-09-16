@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
-from .models import User
+from .models import EmailVerification, User
 
 
 @admin.register(User)
@@ -17,12 +17,14 @@ class UserAdmin(BaseUserAdmin):
         "first_name",
         "last_name",
         "phone",
+        "email_verified",
         "is_active",
         "is_staff",
         "created_at",
     )
     list_filter = (
         "role",
+        "email_verified",
         "is_active",
         "is_staff",
         "is_superuser",
@@ -57,10 +59,11 @@ class UserAdmin(BaseUserAdmin):
             },
         ),
         (
-            "Role & Permissions",
+            "Role & Verification",
             {
                 "fields": (
                     "role",
+                    "email_verified",
                     "is_active",
                     "is_staff",
                     "is_superuser",
@@ -96,9 +99,45 @@ class UserAdmin(BaseUserAdmin):
                     "first_name",
                     "last_name",
                     "phone",
+                    "email_verified",
                     "is_active",
                     "is_staff",
                 ),
             },
         ),
     )
+
+
+@admin.register(EmailVerification)
+class EmailVerificationAdmin(admin.ModelAdmin):
+    """
+    Admin configuration for inspecting EmailVerification records.
+    """
+
+    list_display = (
+        "id",
+        "user",
+        "is_used",
+        "attempts",
+        "expires_at",
+        "created_at",
+    )
+    list_filter = (
+        "is_used",
+        "created_at",
+        "expires_at",
+    )
+    search_fields = (
+        "user__username",
+        "user__email",
+    )
+    readonly_fields = (
+        "id",
+        "user",
+        "otp_hash",
+        "expires_at",
+        "is_used",
+        "attempts",
+        "created_at",
+    )
+    ordering = ("-created_at",)
