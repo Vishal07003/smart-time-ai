@@ -30,6 +30,7 @@ class UserManager(BaseUserManager):
 
         extra_fields.setdefault("is_staff", False)
         extra_fields.setdefault("is_superuser", False)
+        extra_fields.setdefault("email_verified", True)
         if "role" not in extra_fields or not extra_fields["role"]:
             extra_fields["role"] = User.Role.STUDENT
 
@@ -43,6 +44,7 @@ class UserManager(BaseUserManager):
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
         extra_fields.setdefault("role", User.Role.STAFF)
+        extra_fields.setdefault("email_verified", True)
 
         if extra_fields.get("is_staff") is not True:
             raise ValueError("Superuser must have is_staff=True.")
@@ -114,6 +116,11 @@ class User(AbstractUser):
         null=True,
         validators=[validate_indian_phone],
         help_text="Optional 10-digit Indian mobile number starting with 6, 7, 8, or 9.",
+    )
+
+    email_verified = models.BooleanField(
+        default=True,
+        help_text="Designates whether the user has verified their email address.",
     )
 
     created_at = models.DateTimeField(auto_now_add=True)
@@ -224,3 +231,32 @@ class User(AbstractUser):
     @property
     def is_student_role(self):
         return self.role == self.Role.STUDENT
+
+
+class EmailVerification(models.Model):
+    """
+    Stores cryptographically hashed OTPs for student email verification.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="email_verifications",
+    )
+    otp_hash = models.CharField(max_length=255)
+    expires_at = models.DateTimeField()
+    is_used = models.BooleanField(default=False)
+    attempts = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Email Verification"
+        verbose_name_plural = "Email Verifications"
+        indexes = [
+            models.Index(fields=["user", "is_used", "expires_at"]),
+        ]
+
+    def __str__(self):
+        return f"EmailVerification for {self.user.email} (Used: {self.is_used})"

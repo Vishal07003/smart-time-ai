@@ -511,3 +511,421 @@ class AuthAPITests(APITestCase):
         self.assertTrue(IsStaffOrTeacher().has_permission(staff_req, None))
         self.assertTrue(IsStaffOrTeacher().has_permission(teacher_req, None))
         self.assertFalse(IsStaffOrTeacher().has_permission(student_req, None))
+
+
+class StudentRegistrationAPITests(APITestCase):
+    """
+    Tests for POST /api/v1/auth/student-register/
+    """
+
+    def setUp(self):
+        self.register_url = reverse("accounts:student_register")
+        self.valid_payload = {
+            "username": "fresh_student",
+            "email": "fresh_student@smarttime.ai",
+            "password": "StrongStudentPass123!",
+            "confirm_password": "StrongStudentPass123!",
+        }
+
+    def test_successful_student_registration(self):
+        response = self.client.post(self.register_url, self.valid_payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(response.data["success"])
+        self.assertIn("user", response.data)
+        self.assertEqual(response.data["user"]["role"], "STUDENT")
+        self.assertFalse(response.data["user"]["email_verified"])
+        self.assertFalse(response.data["user"]["is_active"])
+
+        # Never return password, hash, or OTP
+        self.assertNotIn("password", response.data["user"])
+        self.assertNotIn("password_hash", response.data["user"])
+        self.assertNotIn("otp", response.data)
+
+        # Verify DB state
+        user = User.objects.get(username="fresh_student")
+        self.assertEqual(user.email, "fresh_student@smarttime.ai")
+        self.assertEqual(user.role, User.Role.STUDENT)
+        self.assertFalse(user.email_verified)
+        self.assertFalse(user.is_active)
+        self.assertTrue(user.check_password("StrongStudentPass123!"))
+
+        # Verify EmailVerification record created
+        verification = user.email_verifications.first()
+        self.assertIsNotNone(verification)
+        self.assertFalse(verification.is_used)
+        self.assertEqual(verification.attempts, 0)
+        self.assertNotEqual(verification.otp_hash, "")
+
+    def test_registration_rejects_role_field(self):
+        # Attempt to inject role=STAFF
+        payload_staff = self.valid_payload.copy()
+        payload_staff["role"] = "STAFF"
+        res_staff = self.client.post(self.register_url, payload_staff, format="json")
+        self.assertEqual(res_staff.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("role", res_staff.data)
+
+        # Attempt to inject role=TEACHER
+        payload_teacher = self.valid_payload.copy()
+        payload_teacher["role"] = "TEACHER"
+        res_teacher = self.client.post(self.register_url, payload_teacher, format="json")
+        self.assertEqual(res_teacher.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("role", res_teacher.data)
+
+    def test_registration_duplicate_email_case_insensitive(self):
+        User.objects.create_user(
+            username="existing_user",
+            email="fresh_student@smarttime.ai",
+            password="SomePassword123!",
+        )
+        payload = self.valid_payload.copy()
+        payload["email"] = "FRESH_STUDENT@SMARTTIME.AI"
+        payload["username"] = "different_user"
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("email", response.data)
+
+    def test_registration_duplicate_username_case_insensitive(self):
+        User.objects.create_user(
+            username="Fresh_Student",
+            email="other@smarttime.ai",
+            password="SomePassword123!",
+        )
+        payload = self.valid_payload.copy()
+        payload["username"] = "fresh_student"
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("username", response.data)
+
+    def test_registration_invalid_email(self):
+        payload = self.valid_payload.copy()
+        payload["email"] = "invalid-email-address"
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_registration_invalid_username(self):
+        payload = self.valid_payload.copy()
+        payload["username"] = "ab"  # Too short (<3)
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_registration_password_mismatch(self):
+        payload = self.valid_payload.copy()
+        payload["confirm_password"] = "MismatchPassword123!"
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("confirm_password", response.data)
+
+    def test_registration_weak_password(self):
+        payload = self.valid_payload.copy()
+        payload["password"] = "short"
+        payload["confirm_password"] = "short"
+        response = self.client.post(self.register_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class EmailOTPVerificationAPITests(APITestCase):
+    """
+    Tests for POST /api/v1/auth/student-verify-email/ and POST /api/v1/auth/student-resend-otp/
+    """
+
+    def setUp(self):
+        from datetime import timedelta
+        from django.contrib.auth.hashers import make_password
+        from django.utils import timezone
+        from accounts.models import EmailVerification
+
+        self.verify_url = reverse("accounts:student_verify_email")
+        self.resend_url = reverse("accounts:student_resend_otp")
+
+        self.student = User.objects.create_user(
+            username="unverified_student",
+            email="unverified@smarttime.ai",
+            password="SecurePass123!",
+            role=User.Role.STUDENT,
+            email_verified=False,
+            is_active=False,
+        )
+        self.plain_otp = "482913"
+        self.verification = EmailVerification.objects.create(
+            user=self.student,
+            otp_hash=make_password(self.plain_otp),
+            expires_at=timezone.now() + timedelta(minutes=10),
+            is_used=False,
+            attempts=0,
+        )
+
+    def test_successful_otp_verification(self):
+        response = self.client.post(
+            self.verify_url,
+            {"email": "unverified@smarttime.ai", "otp": self.plain_otp},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertTrue(response.data["success"])
+
+        # Check user is now verified and active
+        self.student.refresh_from_db()
+        self.assertTrue(self.student.email_verified)
+        self.assertTrue(self.student.is_active)
+
+        # Check verification is marked used
+        self.verification.refresh_from_db()
+        self.assertTrue(self.verification.is_used)
+
+    def test_otp_verification_case_insensitive_email(self):
+        response = self.client.post(
+            self.verify_url,
+            {"email": "UNVERIFIED@SMARTTIME.AI", "otp": self.plain_otp},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.student.refresh_from_db()
+        self.assertTrue(self.student.email_verified)
+
+    def test_wrong_otp_increments_attempts(self):
+        response = self.client.post(
+            self.verify_url,
+            {"email": "unverified@smarttime.ai", "otp": "999999"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(response.data["success"])
+
+        self.verification.refresh_from_db()
+        self.assertEqual(self.verification.attempts, 1)
+        self.assertFalse(self.verification.is_used)
+
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.email_verified)
+
+    def test_expired_otp_fails(self):
+        from datetime import timedelta
+        from django.utils import timezone
+
+        self.verification.expires_at = timezone.now() - timedelta(minutes=1)
+        self.verification.save()
+
+        response = self.client.post(
+            self.verify_url,
+            {"email": "unverified@smarttime.ai", "otp": self.plain_otp},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.student.refresh_from_db()
+        self.assertFalse(self.student.email_verified)
+
+    def test_reused_otp_fails(self):
+        self.verification.is_used = True
+        self.verification.save()
+
+        response = self.client.post(
+            self.verify_url,
+            {"email": "unverified@smarttime.ai", "otp": self.plain_otp},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_invalid_otp_format(self):
+        # Letters or length != 6
+        for invalid_otp in ["12345", "1234567", "abcdef", "12a456"]:
+            response = self.client.post(
+                self.verify_url,
+                {"email": "unverified@smarttime.ai", "otp": invalid_otp},
+                format="json",
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_max_attempts_exceeded_invalidates_otp(self):
+        self.verification.attempts = 5
+        self.verification.save()
+
+        response = self.client.post(
+            self.verify_url,
+            {"email": "unverified@smarttime.ai", "otp": self.plain_otp},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.verification.refresh_from_db()
+        self.assertTrue(self.verification.is_used)
+
+    def test_already_verified_account_reverification_rejected(self):
+        self.student.email_verified = True
+        self.student.is_active = True
+        self.student.save()
+
+        response = self.client.post(
+            self.verify_url,
+            {"email": "unverified@smarttime.ai", "otp": self.plain_otp},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resend_otp_invalidates_previous_otp(self):
+        resend_res = self.client.post(
+            self.resend_url,
+            {"email": "unverified@smarttime.ai"},
+            format="json",
+        )
+        self.assertEqual(resend_res.status_code, status.HTTP_200_OK)
+        self.assertTrue(resend_res.data["success"])
+
+        # Previous verification must now be is_used=True
+        self.verification.refresh_from_db()
+        self.assertTrue(self.verification.is_used)
+
+        # Old OTP no longer works
+        old_otp_res = self.client.post(
+            self.verify_url,
+            {"email": "unverified@smarttime.ai", "otp": self.plain_otp},
+            format="json",
+        )
+        self.assertEqual(old_otp_res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_resend_otp_anti_enumeration(self):
+        # Non-existent email returns same 200 OK generic response
+        res = self.client.post(
+            self.resend_url,
+            {"email": "nonexistent@smarttime.ai"},
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data["success"])
+
+
+class LoginIdentifierAPITests(APITestCase):
+    """
+    Tests for POST /api/v1/auth/login/ supporting identifier (email or username).
+    """
+
+    def setUp(self):
+        self.login_url = reverse("accounts:login")
+        self.password = "SecurePassword123!"
+
+        self.student_user = User.objects.create_user(
+            username="john_student",
+            email="john@smarttime.ai",
+            password=self.password,
+            role=User.Role.STUDENT,
+            email_verified=True,
+            is_active=True,
+        )
+        self.unverified_student = User.objects.create_user(
+            username="unverified_bob",
+            email="bob@smarttime.ai",
+            password=self.password,
+            role=User.Role.STUDENT,
+            email_verified=False,
+            is_active=True,
+        )
+        self.staff_user = User.objects.create_user(
+            username="jane_staff",
+            email="jane@smarttime.ai",
+            password=self.password,
+            role=User.Role.STAFF,
+            email_verified=True,
+            is_active=True,
+        )
+
+    def test_login_with_email_identifier(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "john@smarttime.ai", "password": self.password},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["user"]["username"], "john_student")
+        self.assertIn("access", response.data["tokens"])
+        self.assertIn("refresh", response.data["tokens"])
+
+    def test_login_with_username_identifier(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "john_student", "password": self.password},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["user"]["email"], "john@smarttime.ai")
+
+    def test_login_email_case_insensitivity(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "JOHN@SmartTime.AI", "password": self.password},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_login_username_case_insensitivity(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "JOHN_STUDENT", "password": self.password},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+
+    def test_unverified_student_cannot_login(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "bob@smarttime.ai", "password": self.password},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Please verify your email", str(response.data))
+
+    def test_wrong_password_generic_error(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "john@smarttime.ai", "password": "WrongPassword999!"},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Invalid credentials", str(response.data))
+
+    def test_unknown_identifier_generic_error(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "nobody@smarttime.ai", "password": self.password},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("Invalid credentials", str(response.data))
+
+    def test_staff_login_unrestricted(self):
+        response = self.client.post(
+            self.login_url,
+            {"identifier": "jane@smarttime.ai", "password": self.password},
+            format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["user"]["role"], "STAFF")
+
+
+class ServicesUnitTests(APITestCase):
+    """
+    Unit tests for accounts/services.py
+    """
+
+    def test_generate_otp_is_6_digits(self):
+        from accounts.services import generate_otp
+
+        for _ in range(50):
+            otp = generate_otp()
+            self.assertEqual(len(otp), 6)
+            self.assertTrue(otp.isdigit())
+            self.assertTrue(100000 <= int(otp) <= 999999)
+
+    def test_otp_hash_storage_security(self):
+        from django.contrib.auth.hashers import check_password
+        from accounts.services import create_email_verification
+
+        user = User.objects.create_user(
+            username="service_test_user",
+            email="service_test@smarttime.ai",
+            password="Password123!",
+        )
+        otp = "654321"
+        verification = create_email_verification(user, otp)
+
+        # Plain text OTP must NOT be stored
+        self.assertNotEqual(verification.otp_hash, otp)
+        self.assertTrue(check_password(otp, verification.otp_hash))
+
