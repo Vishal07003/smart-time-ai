@@ -417,4 +417,4 @@ class StudentProfile(models.Model):
             self.student_code = self.student_code.strip()
         if self.roll_number:
             self.roll_number = str(self.roll_number).strip()
-        super().save(*args, **kwargs)
+        super().save(*args, **kwargs)

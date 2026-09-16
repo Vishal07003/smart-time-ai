@@ -15,9 +15,13 @@ from .serializers import (
     LoginSerializer,
     LogoutSerializer,
     ResetPasswordSerializer,
+    StudentRegisterSerializer,
+    StudentResendOTPSerializer,
+    StudentVerifyEmailSerializer,
     UserSerializer,
     UserUpdateSerializer,
 )
+from .services import resend_student_otp, verify_student_otp
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +34,7 @@ class LoginView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "auth_login"
 
     def post(self, request):
         serializer = LoginSerializer(data=request.data)
@@ -44,6 +49,94 @@ class LoginView(APIView):
                 "message": "Login successful.",
                 "user": UserSerializer(user).data,
                 "tokens": tokens,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class StudentRegisterView(APIView):
+    """
+    POST /api/v1/auth/student-register/
+    Public registration endpoint strictly for STUDENTS.
+    Creates unverified user account, generates 6-digit OTP, and dispatches verification email.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_scope = "student_register"
+
+    def post(self, request):
+        serializer = StudentRegisterSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        return Response(
+            {
+                "success": True,
+                "message": "Registration successful. A verification code has been sent to your email.",
+                "user": UserSerializer(user).data,
+            },
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class StudentVerifyEmailView(APIView):
+    """
+    POST /api/v1/auth/student-verify-email/
+    Verifies student's email address using the 6-digit OTP.
+    Activates account upon successful verification.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_scope = "student_verify_otp"
+
+    def post(self, request):
+        serializer = StudentVerifyEmailSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        otp = serializer.validated_data["otp"]
+
+        success, message = verify_student_otp(email, otp)
+
+        if not success:
+            return Response(
+                {
+                    "success": False,
+                    "message": message,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        return Response(
+            {
+                "success": True,
+                "message": message,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class StudentResendOTPView(APIView):
+    """
+    POST /api/v1/auth/student-resend-otp/
+    Resends a new 6-digit verification code to the student's email.
+    Invalidates any previous OTP and maintains anti-enumeration.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_scope = "student_resend_otp"
+
+    def post(self, request):
+        serializer = StudentResendOTPSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        email = serializer.validated_data["email"]
+        resend_student_otp(email)
+
+        return Response(
+            {
+                "success": True,
+                "message": "If the account is eligible, a verification code has been sent.",
             },
             status=status.HTTP_200_OK,
         )
@@ -80,7 +173,7 @@ class MeView(APIView):
 
     PATCH /api/v1/auth/me/
     Allows updating editable personal details (first_name, last_name, phone).
-    Protected fields (role, is_active, username, email) cannot be altered.
+    Protected fields (role, is_active, email_verified, username, email) cannot be altered.
     """
 
     permission_classes = [IsAuthenticated]
@@ -147,6 +240,7 @@ class ForgotPasswordView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = ForgotPasswordSerializer(data=request.data)
@@ -194,6 +288,7 @@ class ResetPasswordView(APIView):
     """
 
     permission_classes = [AllowAny]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         serializer = ResetPasswordSerializer(data=request.data)
