@@ -1,12 +1,17 @@
 from rest_framework import serializers
 
 from .models import (
+    Classroom,
     Department,
     Division,
+    Laboratory,
     PracticalBatch,
     Program,
     Semester,
     Subject,
+    TeacherAvailability,
+    TeacherLeave,
+    TeacherSubject,
 )
 from .validators import (
     normalize_code,
@@ -360,3 +365,378 @@ class SubjectSerializer(serializers.ModelSerializer):
         if value <= 0:
             raise serializers.ValidationError("Duration in minutes must be greater than 0.")
         return value
+
+
+class TeacherSubjectSerializer(serializers.ModelSerializer):
+    """
+    Serializer for TeacherSubject assignment mapping model.
+    """
+
+    teacher_employee_code = serializers.CharField(
+        source="teacher.employee_code", read_only=True
+    )
+    teacher_name = serializers.CharField(
+        source="teacher.user.get_full_name", read_only=True
+    )
+    subject_name = serializers.CharField(
+        source="subject.name", read_only=True
+    )
+    subject_code = serializers.CharField(
+        source="subject.code", read_only=True
+    )
+
+    class Meta:
+        model = TeacherSubject
+        fields = [
+            "id",
+            "teacher",
+            "teacher_employee_code",
+            "teacher_name",
+            "subject",
+            "subject_name",
+            "subject_code",
+            "priority",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "teacher_employee_code",
+            "teacher_name",
+            "subject_name",
+            "subject_code",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate_priority(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Priority must be a positive integer greater than 0.")
+        return value
+
+    def validate(self, attrs):
+        teacher = attrs.get("teacher") or (self.instance.teacher if self.instance else None)
+        subject = attrs.get("subject") or (self.instance.subject if self.instance else None)
+
+        if teacher and subject:
+            qs = TeacherSubject.objects.filter(teacher=teacher, subject=subject)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    "This teacher is already assigned to this subject."
+                )
+
+        return attrs
+
+
+class TeacherAvailabilitySerializer(serializers.ModelSerializer):
+    """
+    Serializer for TeacherAvailability model.
+    """
+
+    teacher_employee_code = serializers.CharField(
+        source="teacher.employee_code", read_only=True
+    )
+    teacher_name = serializers.CharField(
+        source="teacher.user.get_full_name", read_only=True
+    )
+
+    class Meta:
+        model = TeacherAvailability
+        fields = [
+            "id",
+            "teacher",
+            "teacher_employee_code",
+            "teacher_name",
+            "day",
+            "start_time",
+            "end_time",
+            "is_available",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "teacher_employee_code",
+            "teacher_name",
+            "created_at",
+            "updated_at",
+        ]
+        extra_kwargs = {
+            "teacher": {"required": False},
+        }
+
+    def validate_day(self, value):
+        cleaned = value.strip().upper() if isinstance(value, str) else value
+        if cleaned not in TeacherAvailability.Day.values:
+            raise serializers.ValidationError(f"Invalid day '{value}'.")
+        return cleaned
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        teacher = attrs.get("teacher") or (self.instance.teacher if self.instance else None)
+
+        if not teacher and request and hasattr(request.user, "teacher_profile"):
+            teacher = request.user.teacher_profile
+            attrs["teacher"] = teacher
+
+        if not teacher:
+            raise serializers.ValidationError({"teacher": "Teacher profile is required."})
+
+        # If teacher user, ensure they can only assign themselves
+        if (
+            request
+            and request.user.is_authenticated
+            and hasattr(request.user, "role")
+            and request.user.role == "TEACHER"
+        ):
+            if hasattr(request.user, "teacher_profile") and teacher != request.user.teacher_profile:
+                raise serializers.ValidationError(
+                    {"teacher": "Teachers can only manage their own availability."}
+                )
+
+        day = attrs.get("day") or (self.instance.day if self.instance else None)
+        start_time = attrs.get("start_time") or (self.instance.start_time if self.instance else None)
+        end_time = attrs.get("end_time") or (self.instance.end_time if self.instance else None)
+
+        if start_time and end_time:
+            if start_time >= end_time:
+                raise serializers.ValidationError(
+                    {"end_time": "End time must be strictly after start time."}
+                )
+
+            if teacher and day:
+                overlapping_qs = TeacherAvailability.objects.filter(
+                    teacher=teacher,
+                    day=day,
+                    start_time__lt=end_time,
+                    end_time__gt=start_time,
+                )
+                if self.instance:
+                    overlapping_qs = overlapping_qs.exclude(pk=self.instance.pk)
+                if overlapping_qs.exists():
+                    raise serializers.ValidationError(
+                        "Availability time slot overlaps with an existing slot for this teacher on this day."
+                    )
+
+        return attrs
+
+
+class TeacherLeaveSerializer(serializers.ModelSerializer):
+    """
+    Serializer for TeacherLeave model.
+    - Teachers can only submit leaves for themselves, with status=PENDING.
+    - Staff can create/update leaves for any teacher, including approving/rejecting.
+    """
+
+    teacher_employee_code = serializers.CharField(
+        source="teacher.employee_code", read_only=True
+    )
+    teacher_name = serializers.CharField(
+        source="teacher.user.get_full_name", read_only=True
+    )
+
+    class Meta:
+        model = TeacherLeave
+        fields = [
+            "id",
+            "teacher",
+            "teacher_employee_code",
+            "teacher_name",
+            "start_date",
+            "end_date",
+            "reason",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "teacher_employee_code",
+            "teacher_name",
+            "created_at",
+            "updated_at",
+        ]
+        extra_kwargs = {
+            "teacher": {"required": False},
+        }
+
+    def validate_reason(self, value):
+        if not value or not value.strip():
+            raise serializers.ValidationError("Reason for leave cannot be blank.")
+        return value.strip()
+
+    def validate(self, attrs):
+        request = self.context.get("request")
+        teacher = attrs.get("teacher") or (self.instance.teacher if self.instance else None)
+
+        # Auto-bind teacher profile for teacher role user
+        if not teacher and request and hasattr(request.user, "teacher_profile"):
+            teacher = request.user.teacher_profile
+            attrs["teacher"] = teacher
+
+        if not teacher:
+            raise serializers.ValidationError({"teacher": "Teacher profile is required."})
+
+        # Permissions and status restrictions for teachers
+        if (
+            request
+            and request.user.is_authenticated
+            and hasattr(request.user, "role")
+            and request.user.role == "TEACHER"
+        ):
+            if hasattr(request.user, "teacher_profile") and teacher != request.user.teacher_profile:
+                raise serializers.ValidationError(
+                    {"teacher": "Teachers can only manage their own leaves."}
+                )
+
+            # Prevent teacher from setting or changing status to APPROVED or REJECTED
+            if "status" in attrs and attrs["status"] != TeacherLeave.Status.PENDING:
+                raise serializers.ValidationError(
+                    {"status": "Only staff members can approve or reject leaves."}
+                )
+            if not self.instance:
+                attrs["status"] = TeacherLeave.Status.PENDING
+
+        start_date = attrs.get("start_date") or (self.instance.start_date if self.instance else None)
+        end_date = attrs.get("end_date") or (self.instance.end_date if self.instance else None)
+
+        if start_date and end_date:
+            if start_date > end_date:
+                raise serializers.ValidationError(
+                    {"end_date": "End date must be greater than or equal to start date."}
+                )
+
+            # Check overlap if status is not REJECTED
+            target_status = attrs.get("status") or (self.instance.status if self.instance else TeacherLeave.Status.PENDING)
+            if target_status != TeacherLeave.Status.REJECTED and teacher:
+                overlapping_qs = TeacherLeave.objects.filter(
+                    teacher=teacher,
+                    start_date__lte=end_date,
+                    end_date__gte=start_date,
+                ).exclude(status=TeacherLeave.Status.REJECTED)
+
+                if self.instance:
+                    overlapping_qs = overlapping_qs.exclude(pk=self.instance.pk)
+
+                if overlapping_qs.exists():
+                    raise serializers.ValidationError(
+                        "A leave request for this teacher already overlaps with the selected date range."
+                    )
+
+        return attrs
+
+
+class ClassroomSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Classroom model.
+    """
+
+    class Meta:
+        model = Classroom
+        fields = [
+            "id",
+            "building",
+            "room_number",
+            "floor",
+            "capacity",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_building(self, value):
+        return validate_non_empty_name(value, "Building")
+
+    def validate_room_number(self, value):
+        return validate_non_empty_name(value, "Room number")
+
+    def validate_capacity(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Capacity must be a positive integer greater than 0.")
+        return value
+
+    def validate_status(self, value):
+        cleaned = value.strip().upper() if isinstance(value, str) else value
+        if cleaned not in Classroom.Status.values:
+            raise serializers.ValidationError(f"Invalid status '{value}'.")
+        return cleaned
+
+    def validate(self, attrs):
+        building = attrs.get("building") or (self.instance.building if self.instance else None)
+        room_number = attrs.get("room_number") or (self.instance.room_number if self.instance else None)
+
+        if building and room_number:
+            b_clean = normalize_string(building)
+            r_clean = normalize_string(room_number)
+            qs = Classroom.objects.filter(building__iexact=b_clean, room_number__iexact=r_clean)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    "A classroom with this room number already exists in this building."
+                )
+
+        return attrs
+
+
+class LaboratorySerializer(serializers.ModelSerializer):
+    """
+    Serializer for Laboratory model.
+    """
+
+    class Meta:
+        model = Laboratory
+        fields = [
+            "id",
+            "building",
+            "lab_number",
+            "name",
+            "floor",
+            "capacity",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = ["id", "created_at", "updated_at"]
+
+    def validate_building(self, value):
+        return validate_non_empty_name(value, "Building")
+
+    def validate_lab_number(self, value):
+        return validate_non_empty_name(value, "Lab number")
+
+    def validate_name(self, value):
+        return validate_non_empty_name(value, "Laboratory name")
+
+    def validate_capacity(self, value):
+        if value <= 0:
+            raise serializers.ValidationError("Capacity must be a positive integer greater than 0.")
+        return value
+
+    def validate_status(self, value):
+        cleaned = value.strip().upper() if isinstance(value, str) else value
+        if cleaned not in Laboratory.Status.values:
+            raise serializers.ValidationError(f"Invalid status '{value}'.")
+        return cleaned
+
+    def validate(self, attrs):
+        building = attrs.get("building") or (self.instance.building if self.instance else None)
+        lab_number = attrs.get("lab_number") or (self.instance.lab_number if self.instance else None)
+
+        if building and lab_number:
+            b_clean = normalize_string(building)
+            l_clean = normalize_string(lab_number)
+            qs = Laboratory.objects.filter(building__iexact=b_clean, lab_number__iexact=l_clean)
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    "A laboratory with this lab number already exists in this building."
+                )
+
+        return attrs
+
+

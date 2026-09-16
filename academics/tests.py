@@ -392,3 +392,679 @@ class AcademicAPITests(APITestCase):
 
         res = self.client.get(self.dept_list_url)
         self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+
+class TeacherSubjectAPITests(APITestCase):
+    """
+    Staff-only CRUD tests for TeacherSubject assignment API.
+    """
+
+    def setUp(self):
+        from accounts.models import TeacherProfile
+        from academics.models import Department, Program, Subject, TeacherSubject
+
+        self.staff_user = UserModel.objects.create_user(
+            username="ts_staff",
+            email="ts_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_user = UserModel.objects.create_user(
+            username="ts_teacher",
+            email="ts_teacher@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="ts_student",
+            email="ts_student@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        self.dept = Department.objects.create(name="Computer Science", code="CS_TS")
+        self.prog = Program.objects.create(
+            department=self.dept, name="B.Tech CS", code="BTECH_CS_TS"
+        )
+        self.subj1 = Subject.objects.create(
+            program=self.prog, name="Operating Systems", code="CS_OS"
+        )
+        self.subj2 = Subject.objects.create(
+            program=self.prog, name="Database Systems", code="CS_DB"
+        )
+
+        self.teacher_profile = TeacherProfile.objects.create(
+            user=self.teacher_user,
+            employee_code="EMP_TS_01",
+            department=self.dept,
+            designation="Assistant Professor",
+        )
+
+        self.assignment = TeacherSubject.objects.create(
+            teacher=self.teacher_profile,
+            subject=self.subj1,
+            priority=1,
+        )
+
+        self.list_url = reverse("academics:teacher-subject-list")
+        self.detail_url = reverse(
+            "academics:teacher-subject-detail", kwargs={"pk": self.assignment.id}
+        )
+
+    def test_staff_list_and_create_teacher_subject(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # List
+        res_list = self.client.get(self.list_url)
+        self.assertEqual(res_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_list.data), 1)
+
+        # Create
+        res_create = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher_profile.id),
+                "subject": str(self.subj2.id),
+                "priority": 2,
+            },
+            format="json",
+        )
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res_create.data["priority"], 2)
+
+    def test_duplicate_assignment_fails(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        res = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher_profile.id),
+                "subject": str(self.subj1.id),
+                "priority": 1,
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_non_staff_forbidden(self):
+        # Teacher
+        refresh_t = RefreshToken.for_user(self.teacher_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_t.access_token}")
+        res_t = self.client.get(self.list_url)
+        self.assertEqual(res_t.status_code, status.HTTP_403_FORBIDDEN)
+
+        # Student
+        refresh_s = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_s.access_token}")
+        res_s = self.client.get(self.list_url)
+        self.assertEqual(res_s.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class TeacherAvailabilityAPITests(APITestCase):
+    """
+    CRUD and permission tests for TeacherAvailability endpoints.
+    """
+
+    def setUp(self):
+        from accounts.models import TeacherProfile
+        from academics.models import Department, TeacherAvailability
+
+        self.staff_user = UserModel.objects.create_user(
+            username="avail_staff",
+            email="avail_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher1_user = UserModel.objects.create_user(
+            username="avail_teacher1",
+            email="avail_teacher1@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.teacher2_user = UserModel.objects.create_user(
+            username="avail_teacher2",
+            email="avail_teacher2@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="avail_student",
+            email="avail_student@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        self.dept = Department.objects.create(name="IT Dept", code="IT_AVAIL")
+
+        self.teacher1_profile = TeacherProfile.objects.create(
+            user=self.teacher1_user,
+            employee_code="EMP_AV_01",
+            department=self.dept,
+            designation="Professor",
+        )
+        self.teacher2_profile = TeacherProfile.objects.create(
+            user=self.teacher2_user,
+            employee_code="EMP_AV_02",
+            department=self.dept,
+            designation="Assistant Professor",
+        )
+
+        self.avail1 = TeacherAvailability.objects.create(
+            teacher=self.teacher1_profile,
+            day="MONDAY",
+            start_time="09:00:00",
+            end_time="11:00:00",
+            is_available=True,
+        )
+        self.avail2 = TeacherAvailability.objects.create(
+            teacher=self.teacher2_profile,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="12:00:00",
+            is_available=True,
+        )
+
+        self.list_url = reverse("academics:teacher-availability-list")
+        self.detail_url1 = reverse(
+            "academics:teacher-availability-detail", kwargs={"pk": self.avail1.id}
+        )
+        self.detail_url2 = reverse(
+            "academics:teacher-availability-detail", kwargs={"pk": self.avail2.id}
+        )
+
+    def test_staff_can_view_all_and_create(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # List should return both availabilities
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 2)
+
+        # Create availability for teacher 1 on Tuesday
+        create_res = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher1_profile.id),
+                "day": "TUESDAY",
+                "start_time": "14:00:00",
+                "end_time": "16:00:00",
+                "is_available": True,
+            },
+            format="json",
+        )
+        self.assertEqual(create_res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(create_res.data["day"], "TUESDAY")
+
+    def test_teacher_can_only_view_and_manage_own(self):
+        refresh = RefreshToken.for_user(self.teacher1_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # List should return ONLY teacher 1's availability
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)
+        self.assertEqual(res.data[0]["id"], str(self.avail1.id))
+
+        # Teacher 1 cannot view or modify teacher 2's availability
+        res_get2 = self.client.get(self.detail_url2)
+        self.assertEqual(res_get2.status_code, status.HTTP_404_NOT_FOUND)
+
+        res_patch2 = self.client.patch(
+            self.detail_url2,
+            {"is_available": False},
+            format="json",
+        )
+        self.assertEqual(res_patch2.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Teacher 1 can update their own availability
+        res_patch1 = self.client.patch(
+            self.detail_url1,
+            {"is_available": False},
+            format="json",
+        )
+        self.assertEqual(res_patch1.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_patch1.data["is_available"], False)
+
+        # Teacher 1 creates their own availability (auto-bound to teacher1)
+        res_create = self.client.post(
+            self.list_url,
+            {
+                "day": "WEDNESDAY",
+                "start_time": "10:00:00",
+                "end_time": "12:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(res_create.data["teacher"]), str(self.teacher1_profile.id))
+
+    def test_student_and_anon_forbidden(self):
+        # Anonymous
+        self.client.credentials()
+        res_anon = self.client.get(self.list_url)
+        self.assertEqual(res_anon.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # Student
+        refresh_s = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_s.access_token}")
+        res_s = self.client.get(self.list_url)
+        self.assertEqual(res_s.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_validation_start_time_before_end_time(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        res = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher1_profile.id),
+                "day": "THURSDAY",
+                "start_time": "14:00:00",
+                "end_time": "12:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("end_time", res.data)
+
+    def test_validation_invalid_day(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        res = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher1_profile.id),
+                "day": "FUNDAY",
+                "start_time": "10:00:00",
+                "end_time": "12:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("day", res.data)
+
+    def test_prevent_overlapping_availability(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # self.avail1 is MONDAY 09:00:00 - 11:00:00
+        # Overlap attempt: MONDAY 10:00:00 - 11:30:00 for teacher1
+        res = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher1_profile.id),
+                "day": "MONDAY",
+                "start_time": "10:00:00",
+                "end_time": "11:30:00",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("overlaps", str(res.data))
+
+        # Non-overlapping attempt: MONDAY 11:00:00 - 12:00:00 (adjacent) -> should SUCCEED
+        res_adj = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher1_profile.id),
+                "day": "MONDAY",
+                "start_time": "11:00:00",
+                "end_time": "12:00:00",
+            },
+            format="json",
+        )
+        self.assertEqual(res_adj.status_code, status.HTTP_201_CREATED)
+
+
+class TeacherLeaveAPITests(APITestCase):
+    """
+    CRUD, permission, approval, and overlap tests for TeacherLeave endpoints.
+    """
+
+    def setUp(self):
+        from accounts.models import TeacherProfile
+        from academics.models import Department, TeacherLeave
+
+        self.staff_user = UserModel.objects.create_user(
+            username="leave_staff",
+            email="leave_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher1_user = UserModel.objects.create_user(
+            username="leave_teacher1",
+            email="leave_teacher1@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.teacher2_user = UserModel.objects.create_user(
+            username="leave_teacher2",
+            email="leave_teacher2@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="leave_student",
+            email="leave_student@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        self.dept = Department.objects.create(name="Leave Dept", code="LV_DEPT")
+
+        self.teacher1_profile = TeacherProfile.objects.create(
+            user=self.teacher1_user,
+            employee_code="EMP_LV_01",
+            department=self.dept,
+            designation="Professor",
+        )
+        self.teacher2_profile = TeacherProfile.objects.create(
+            user=self.teacher2_user,
+            employee_code="EMP_LV_02",
+            department=self.dept,
+            designation="Assistant Professor",
+        )
+
+        self.leave1 = TeacherLeave.objects.create(
+            teacher=self.teacher1_profile,
+            start_date="2026-10-01",
+            end_date="2026-10-05",
+            reason="Medical leave",
+            status=TeacherLeave.Status.PENDING,
+        )
+        self.leave2 = TeacherLeave.objects.create(
+            teacher=self.teacher2_profile,
+            start_date="2026-10-01",
+            end_date="2026-10-03",
+            reason="Conference attendance",
+            status=TeacherLeave.Status.PENDING,
+        )
+
+        self.list_url = reverse("academics:teacher-leave-list")
+        self.detail_url1 = reverse(
+            "academics:teacher-leave-detail", kwargs={"pk": self.leave1.id}
+        )
+        self.detail_url2 = reverse(
+            "academics:teacher-leave-detail", kwargs={"pk": self.leave2.id}
+        )
+
+    def test_staff_can_view_all_and_approve_reject(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # List returns both
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 2)
+
+        # Staff approves leave1
+        res_approve = self.client.patch(
+            self.detail_url1,
+            {"status": "APPROVED"},
+            format="json",
+        )
+        self.assertEqual(res_approve.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_approve.data["status"], "APPROVED")
+
+        # Staff rejects leave2
+        res_reject = self.client.patch(
+            self.detail_url2,
+            {"status": "REJECTED"},
+            format="json",
+        )
+        self.assertEqual(res_reject.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_reject.data["status"], "REJECTED")
+
+    def test_teacher_can_only_view_and_manage_own(self):
+        refresh = RefreshToken.for_user(self.teacher1_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # List returns only own leave
+        res = self.client.get(self.list_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)
+        self.assertEqual(res.data[0]["id"], str(self.leave1.id))
+
+        # Teacher 1 cannot view or modify teacher 2's leave
+        res_get2 = self.client.get(self.detail_url2)
+        self.assertEqual(res_get2.status_code, status.HTTP_404_NOT_FOUND)
+
+        res_patch2 = self.client.patch(
+            self.detail_url2,
+            {"reason": "Hacked reason"},
+            format="json",
+        )
+        self.assertEqual(res_patch2.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Teacher 1 creates their own leave (status should be PENDING)
+        res_create = self.client.post(
+            self.list_url,
+            {
+                "start_date": "2026-11-01",
+                "end_date": "2026-11-03",
+                "reason": "Family function",
+            },
+            format="json",
+        )
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(str(res_create.data["teacher"]), str(self.teacher1_profile.id))
+        self.assertEqual(res_create.data["status"], "PENDING")
+
+        # Teacher cannot self-approve leave
+        res_self_approve = self.client.patch(
+            self.detail_url1,
+            {"status": "APPROVED"},
+            format="json",
+        )
+        self.assertEqual(res_self_approve.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_student_and_anon_forbidden(self):
+        # Anon
+        self.client.credentials()
+        res_anon = self.client.get(self.list_url)
+        self.assertEqual(res_anon.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        # Student
+        refresh_s = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_s.access_token}")
+        res_s = self.client.get(self.list_url)
+        self.assertEqual(res_s.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_validation_date_order(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        res = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher1_profile.id),
+                "start_date": "2026-12-10",
+                "end_date": "2026-12-05",
+                "reason": "Invalid dates",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("end_date", res.data)
+
+    def test_validation_overlapping_leaves(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # self.leave1 is 2026-10-01 to 2026-10-05
+        # Attempt overlap: 2026-10-03 to 2026-10-07
+        res = self.client.post(
+            self.list_url,
+            {
+                "teacher": str(self.teacher1_profile.id),
+                "start_date": "2026-10-03",
+                "end_date": "2026-10-07",
+                "reason": "Overlap attempt",
+            },
+            format="json",
+        )
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("overlaps", str(res.data))
+
+    def test_staff_update_status_endpoint(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        status_url = reverse("academics:teacher-leave-status", kwargs={"pk": self.leave1.id})
+        res = self.client.patch(status_url, {"status": "APPROVED"}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], "APPROVED")
+
+        # Invalid status
+        res_invalid = self.client.patch(status_url, {"status": "UNKNOWN"}, format="json")
+        self.assertEqual(res_invalid.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class ClassroomAndLaboratoryAPITests(APITestCase):
+    """
+    CRUD and permission tests for Classroom and Laboratory endpoints.
+    """
+
+    def setUp(self):
+        from academics.models import Classroom, Laboratory
+
+        self.staff_user = UserModel.objects.create_user(
+            username="res_staff",
+            email="res_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_user = UserModel.objects.create_user(
+            username="res_teacher",
+            email="res_teacher@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="res_student",
+            email="res_student@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        self.classroom = Classroom.objects.create(
+            building="Main Building",
+            room_number="101",
+            floor=1,
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.laboratory = Laboratory.objects.create(
+            building="Tech Block",
+            lab_number="LAB-01",
+            name="AI Lab",
+            floor=2,
+            capacity=30,
+            status=Laboratory.Status.AVAILABLE,
+        )
+
+        self.cr_list_url = reverse("academics:classroom-list")
+        self.cr_detail_url = reverse(
+            "academics:classroom-detail", kwargs={"pk": self.classroom.id}
+        )
+        self.lab_list_url = reverse("academics:laboratory-list")
+        self.lab_detail_url = reverse(
+            "academics:laboratory-detail", kwargs={"pk": self.laboratory.id}
+        )
+
+    def test_classroom_crud_and_permissions(self):
+        # Staff full CRUD
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        res_list = self.client.get(self.cr_list_url)
+        self.assertEqual(res_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_list.data), 1)
+
+        res_create = self.client.post(
+            self.cr_list_url,
+            {
+                "building": "Main Building",
+                "room_number": "102",
+                "floor": 1,
+                "capacity": 70,
+                "status": "AVAILABLE",
+            },
+            format="json",
+        )
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+
+        # Duplicate classroom in same building fails
+        res_dup = self.client.post(
+            self.cr_list_url,
+            {
+                "building": "Main Building",
+                "room_number": "101",
+                "floor": 1,
+                "capacity": 50,
+            },
+            format="json",
+        )
+        self.assertEqual(res_dup.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Teacher read-only
+        refresh_t = RefreshToken.for_user(self.teacher_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_t.access_token}")
+        res_t_get = self.client.get(self.cr_detail_url)
+        self.assertEqual(res_t_get.status_code, status.HTTP_200_OK)
+
+        res_t_post = self.client.post(
+            self.cr_list_url,
+            {"building": "Block B", "room_number": "201", "capacity": 40},
+            format="json",
+        )
+        self.assertEqual(res_t_post.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_laboratory_crud_and_permissions(self):
+        # Staff full CRUD
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        res_list = self.client.get(self.lab_list_url)
+        self.assertEqual(res_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_list.data), 1)
+
+        res_create = self.client.post(
+            self.lab_list_url,
+            {
+                "building": "Tech Block",
+                "lab_number": "LAB-02",
+                "name": "Robotics Lab",
+                "floor": 2,
+                "capacity": 25,
+            },
+            format="json",
+        )
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+
+        # Duplicate lab in same building fails
+        res_dup = self.client.post(
+            self.lab_list_url,
+            {
+                "building": "Tech Block",
+                "lab_number": "LAB-01",
+                "name": "Duplicate Lab",
+                "capacity": 30,
+            },
+            format="json",
+        )
+        self.assertEqual(res_dup.status_code, status.HTTP_400_BAD_REQUEST)
+
+        # Student read-only
+        refresh_s = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_s.access_token}")
+        res_s_get = self.client.get(self.lab_detail_url)
+        self.assertEqual(res_s_get.status_code, status.HTTP_200_OK)
+
+        res_s_delete = self.client.delete(self.lab_detail_url)
+        self.assertEqual(res_s_delete.status_code, status.HTTP_403_FORBIDDEN)
+

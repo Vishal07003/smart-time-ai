@@ -224,3 +224,197 @@ class User(AbstractUser):
     @property
     def is_student_role(self):
         return self.role == self.Role.STUDENT
+
+
+class TeacherProfile(models.Model):
+    """
+    Teacher profile associated with accounts.User (role=TEACHER).
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        INACTIVE = "INACTIVE", "Inactive"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="teacher_profile",
+        help_text="Associated user account with TEACHER role",
+    )
+    employee_code = models.CharField(
+        max_length=30,
+        unique=True,
+        help_text="Unique employee code for the teacher",
+    )
+    department = models.ForeignKey(
+        "academics.Department",
+        on_delete=models.PROTECT,
+        related_name="teachers",
+        help_text="Department to which teacher belongs",
+    )
+    designation = models.CharField(
+        max_length=100,
+        help_text="Designation (e.g. Professor, Assistant Professor, Lecturer)",
+    )
+    joining_date = models.DateField(
+        null=True,
+        blank=True,
+        help_text="Date of joining the institution",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        help_text="Current employment status",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Teacher Profile"
+        verbose_name_plural = "Teacher Profiles"
+        constraints = [
+            models.UniqueConstraint(
+                Lower("employee_code"),
+                name="unique_lower_employee_code",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.get_full_name() or self.user.username} ({self.employee_code})"
+
+    def clean(self):
+        super().clean()
+        if hasattr(self, "user") and self.user and self.user.role != User.Role.TEACHER:
+            raise ValidationError(
+                {"user": "Teacher profile can only be associated with a user having the TEACHER role."}
+            )
+
+        if self.employee_code:
+            self.employee_code = self.employee_code.strip()
+            qs = TeacherProfile.objects.filter(employee_code__iexact=self.employee_code)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError({"employee_code": "A teacher with this employee code already exists."})
+
+    def save(self, *args, **kwargs):
+        if self.employee_code:
+            self.employee_code = self.employee_code.strip()
+        super().save(*args, **kwargs)
+
+
+class StudentProfile(models.Model):
+    """
+    Student profile associated with accounts.User (role=STUDENT).
+    """
+
+    class Status(models.TextChoices):
+        ACTIVE = "ACTIVE", "Active"
+        INACTIVE = "INACTIVE", "Inactive"
+        GRADUATED = "GRADUATED", "Graduated"
+        LEFT = "LEFT", "Left"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.OneToOneField(
+        User,
+        on_delete=models.CASCADE,
+        related_name="student_profile",
+        help_text="Associated user account with STUDENT role",
+    )
+    student_code = models.CharField(
+        max_length=30,
+        unique=True,
+        help_text="Unique student registration/enrollment code",
+    )
+    roll_number = models.CharField(
+        max_length=30,
+        help_text="Roll number within division (unique per division)",
+    )
+    division = models.ForeignKey(
+        "academics.Division",
+        on_delete=models.PROTECT,
+        related_name="students",
+        help_text="Division to which student belongs",
+    )
+    batch = models.ForeignKey(
+        "academics.PracticalBatch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="students",
+        help_text="Optional practical batch within the division",
+    )
+    admission_year = models.PositiveIntegerField(
+        help_text="Year of admission (e.g. 2024)",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.ACTIVE,
+        help_text="Current student status",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["division", "roll_number"]
+        verbose_name = "Student Profile"
+        verbose_name_plural = "Student Profiles"
+        constraints = [
+            models.UniqueConstraint(
+                Lower("student_code"),
+                name="unique_lower_student_code",
+            ),
+            models.UniqueConstraint(
+                fields=["division", "roll_number"],
+                name="unique_roll_number_per_division",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.user.get_full_name() or self.user.username} (Roll: {self.roll_number}, Code: {self.student_code})"
+
+    def clean(self):
+        super().clean()
+        if hasattr(self, "user") and self.user and self.user.role != User.Role.STUDENT:
+            raise ValidationError(
+                {"user": "Student profile can only be associated with a user having the STUDENT role."}
+            )
+
+        if self.student_code:
+            self.student_code = self.student_code.strip()
+            qs = StudentProfile.objects.filter(student_code__iexact=self.student_code)
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError({"student_code": "A student with this student code already exists."})
+
+        if self.roll_number:
+            self.roll_number = str(self.roll_number).strip()
+            if self.division_id:
+                roll_qs = StudentProfile.objects.filter(
+                    division_id=self.division_id,
+                    roll_number__iexact=self.roll_number,
+                )
+                if self.pk:
+                    roll_qs = roll_qs.exclude(pk=self.pk)
+                if roll_qs.exists():
+                    raise ValidationError(
+                        {"roll_number": "A student with this roll number already exists in this division."}
+                    )
+
+        if self.batch_id and self.division_id:
+            if self.batch.division_id != self.division_id:
+                raise ValidationError(
+                    {"batch": "The selected practical batch does not belong to the selected division."}
+                )
+
+    def save(self, *args, **kwargs):
+        if self.student_code:
+            self.student_code = self.student_code.strip()
+        if self.roll_number:
+            self.roll_number = str(self.roll_number).strip()
+        super().save(*args, **kwargs)

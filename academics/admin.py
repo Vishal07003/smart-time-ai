@@ -1,12 +1,17 @@
 from django.contrib import admin
 
 from .models import (
+    Classroom,
     Department,
     Division,
+    Laboratory,
     PracticalBatch,
     Program,
     Semester,
     Subject,
+    TeacherAvailability,
+    TeacherLeave,
+    TeacherSubject,
 )
 
 
@@ -98,3 +103,124 @@ class SubjectAdmin(admin.ModelAdmin):
     search_fields = ("name", "code", "program__name", "program__code")
     ordering = ("program", "code")
     readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TeacherSubject)
+class TeacherSubjectAdmin(admin.ModelAdmin):
+    list_display = (
+        "teacher",
+        "subject",
+        "priority",
+        "created_at",
+    )
+    list_filter = (
+        "priority",
+        "subject__program",
+    )
+    search_fields = (
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+        "subject__name",
+        "subject__code",
+    )
+    ordering = ("teacher", "priority")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TeacherAvailability)
+class TeacherAvailabilityAdmin(admin.ModelAdmin):
+    list_display = (
+        "teacher",
+        "day",
+        "start_time",
+        "end_time",
+        "is_available",
+        "created_at",
+    )
+    list_filter = (
+        "day",
+        "is_available",
+        "teacher__department",
+    )
+    search_fields = (
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+    )
+    ordering = ("day", "start_time")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TeacherLeave)
+class TeacherLeaveAdmin(admin.ModelAdmin):
+    list_display = (
+        "teacher",
+        "start_date",
+        "end_date",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "teacher__department",
+        "start_date",
+        "end_date",
+    )
+    search_fields = (
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+        "reason",
+    )
+    ordering = ("-start_date", "-created_at")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(Classroom)
+class ClassroomAdmin(admin.ModelAdmin):
+    list_display = (
+        "building",
+        "room_number",
+        "floor",
+        "capacity",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "building",
+        "floor",
+    )
+    search_fields = (
+        "building",
+        "room_number",
+    )
+    ordering = ("building", "room_number")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(Laboratory)
+class LaboratoryAdmin(admin.ModelAdmin):
+    list_display = (
+        "building",
+        "lab_number",
+        "name",
+        "floor",
+        "capacity",
+        "status",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "building",
+        "floor",
+    )
+    search_fields = (
+        "building",
+        "lab_number",
+        "name",
+    )
+    ordering = ("building", "lab_number")
+    readonly_fields = ("id", "created_at", "updated_at")
+

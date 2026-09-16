@@ -389,3 +389,375 @@ class Subject(models.Model):
         if self.code:
             self.code = normalize_code(self.code)
         super().save(*args, **kwargs)
+
+
+class TeacherSubject(models.Model):
+    """
+    Mapping model assigning Subjects to TeacherProfiles.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    teacher = models.ForeignKey(
+        "accounts.TeacherProfile",
+        on_delete=models.CASCADE,
+        related_name="teacher_subjects",
+        help_text="Assigned teacher profile",
+    )
+    subject = models.ForeignKey(
+        Subject,
+        on_delete=models.CASCADE,
+        related_name="teacher_subjects",
+        help_text="Assigned subject",
+    )
+    priority = models.PositiveSmallIntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text="Assignment priority/preference rank (e.g., 1 = primary)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["teacher", "priority", "created_at"]
+        verbose_name = "Teacher Subject Assignment"
+        verbose_name_plural = "Teacher Subject Assignments"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["teacher", "subject"],
+                name="unique_teacher_subject_assignment",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.teacher.employee_code} -> {self.subject.code} (Priority: {self.priority})"
+
+    def clean(self):
+        super().clean()
+        if self.priority is not None and self.priority < 1:
+            raise ValidationError(
+                {"priority": "Priority must be a positive integer greater than 0."}
+            )
+        if self.teacher_id and self.subject_id:
+            qs = TeacherSubject.objects.filter(
+                teacher_id=self.teacher_id, subject_id=self.subject_id
+            )
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            if qs.exists():
+                raise ValidationError(
+                    {"non_field_errors": ["This teacher is already assigned to this subject."]}
+                )
+
+
+class TeacherAvailability(models.Model):
+    """
+    Weekly availability / schedule constraints for Teachers.
+    """
+
+    class Day(models.TextChoices):
+        MONDAY = "MONDAY", "Monday"
+        TUESDAY = "TUESDAY", "Tuesday"
+        WEDNESDAY = "WEDNESDAY", "Wednesday"
+        THURSDAY = "THURSDAY", "Thursday"
+        FRIDAY = "FRIDAY", "Friday"
+        SATURDAY = "SATURDAY", "Saturday"
+        SUNDAY = "SUNDAY", "Sunday"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    teacher = models.ForeignKey(
+        "accounts.TeacherProfile",
+        on_delete=models.CASCADE,
+        related_name="availabilities",
+        help_text="Associated teacher profile",
+    )
+    day = models.CharField(
+        max_length=15,
+        choices=Day.choices,
+        help_text="Day of the week (e.g. MONDAY)",
+    )
+    start_time = models.TimeField(
+        help_text="Slot start time",
+    )
+    end_time = models.TimeField(
+        help_text="Slot end time",
+    )
+    is_available = models.BooleanField(
+        default=True,
+        help_text="Designates whether the teacher is available or unavailable during this slot",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["day", "start_time"]
+        verbose_name = "Teacher Availability"
+        verbose_name_plural = "Teacher Availabilities"
+
+    def __str__(self):
+        status = "Available" if self.is_available else "Unavailable"
+        return f"{self.teacher.employee_code} - {self.day} ({self.start_time} - {self.end_time}) [{status}]"
+
+    def clean(self):
+        super().clean()
+        if self.day:
+            self.day = self.day.strip().upper()
+            if self.day not in self.Day.values:
+                raise ValidationError({"day": f"Invalid day '{self.day}'."})
+
+        if self.start_time and self.end_time:
+            if self.start_time >= self.end_time:
+                raise ValidationError(
+                    {"end_time": "End time must be strictly after start time."}
+                )
+
+            if self.teacher_id and self.day:
+                overlapping_qs = TeacherAvailability.objects.filter(
+                    teacher_id=self.teacher_id,
+                    day=self.day,
+                    start_time__lt=self.end_time,
+                    end_time__gt=self.start_time,
+                )
+                if self.pk:
+                    overlapping_qs = overlapping_qs.exclude(pk=self.pk)
+                if overlapping_qs.exists():
+                    raise ValidationError(
+                        "Availability time slot overlaps with an existing slot for this teacher on this day."
+                    )
+
+    def save(self, *args, **kwargs):
+        if self.day:
+            self.day = self.day.strip().upper()
+        super().save(*args, **kwargs)
+
+
+class TeacherLeave(models.Model):
+    """
+    Teacher leave request model.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        APPROVED = "APPROVED", "Approved"
+        REJECTED = "REJECTED", "Rejected"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    teacher = models.ForeignKey(
+        "accounts.TeacherProfile",
+        on_delete=models.CASCADE,
+        related_name="leaves",
+        help_text="Associated teacher profile",
+    )
+    start_date = models.DateField(
+        help_text="Leave start date",
+    )
+    end_date = models.DateField(
+        help_text="Leave end date",
+    )
+    reason = models.TextField(
+        help_text="Reason for leave request",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.PENDING,
+        help_text="Leave request status (PENDING, APPROVED, REJECTED)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-start_date", "-created_at"]
+        verbose_name = "Teacher Leave"
+        verbose_name_plural = "Teacher Leaves"
+
+    def __str__(self):
+        return f"{self.teacher.employee_code} Leave: {self.start_date} to {self.end_date} [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if self.reason:
+            self.reason = self.reason.strip()
+        if not self.reason:
+            raise ValidationError({"reason": "Reason for leave cannot be blank."})
+
+        if self.start_date and self.end_date:
+            if self.start_date > self.end_date:
+                raise ValidationError(
+                    {"end_date": "End date must be greater than or equal to start date."}
+                )
+
+            if self.teacher_id:
+                overlapping_qs = TeacherLeave.objects.filter(
+                    teacher_id=self.teacher_id,
+                    start_date__lte=self.end_date,
+                    end_date__gte=self.start_date,
+                ).exclude(status=self.Status.REJECTED)
+                if self.pk:
+                    overlapping_qs = overlapping_qs.exclude(pk=self.pk)
+                if overlapping_qs.exists():
+                    raise ValidationError(
+                        "A leave request for this teacher already overlaps with the selected date range."
+                    )
+
+    def save(self, *args, **kwargs):
+        if self.reason:
+            self.reason = self.reason.strip()
+        super().save(*args, **kwargs)
+
+
+class Classroom(models.Model):
+    """
+    Physical classroom / lecture hall resource.
+    """
+
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Available"
+        UNAVAILABLE = "UNAVAILABLE", "Unavailable"
+        MAINTENANCE = "MAINTENANCE", "Maintenance"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    building = models.CharField(
+        max_length=50,
+        help_text="Building name or code (e.g., Main Building, Block A)",
+    )
+    room_number = models.CharField(
+        max_length=20,
+        help_text="Room number/name (e.g., 101, LH-1)",
+    )
+    floor = models.IntegerField(
+        default=0,
+        help_text="Floor number (e.g., 0 for Ground, 1 for 1st Floor)",
+    )
+    capacity = models.PositiveIntegerField(
+        default=60,
+        validators=[MinValueValidator(1)],
+        help_text="Seating capacity (must be > 0)",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.AVAILABLE,
+        help_text="Classroom availability status (AVAILABLE, UNAVAILABLE, MAINTENANCE)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["building", "room_number"]
+        verbose_name = "Classroom"
+        verbose_name_plural = "Classrooms"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["building", "room_number"],
+                name="unique_classroom_building_room",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.building} - Room {self.room_number} (Cap: {self.capacity}) [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if self.building:
+            self.building = validate_non_empty_name(self.building, "Building")
+        if self.room_number:
+            self.room_number = validate_non_empty_name(self.room_number, "Room number")
+        if self.capacity is not None and self.capacity <= 0:
+            raise ValidationError({"capacity": "Capacity must be a positive integer."})
+        if self.status:
+            self.status = self.status.strip().upper()
+            if self.status not in self.Status.values:
+                raise ValidationError({"status": f"Invalid status '{self.status}'."})
+
+    def save(self, *args, **kwargs):
+        if self.building:
+            self.building = normalize_string(self.building)
+        if self.room_number:
+            self.room_number = normalize_string(self.room_number)
+        if self.status:
+            self.status = self.status.strip().upper()
+        super().save(*args, **kwargs)
+
+
+class Laboratory(models.Model):
+    """
+    Physical laboratory resource.
+    """
+
+    class Status(models.TextChoices):
+        AVAILABLE = "AVAILABLE", "Available"
+        UNAVAILABLE = "UNAVAILABLE", "Unavailable"
+        MAINTENANCE = "MAINTENANCE", "Maintenance"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    building = models.CharField(
+        max_length=50,
+        help_text="Building name or code (e.g., Tech Block, Block B)",
+    )
+    lab_number = models.CharField(
+        max_length=20,
+        help_text="Lab number/code (e.g., LAB-101, L1)",
+    )
+    name = models.CharField(
+        max_length=100,
+        help_text="Laboratory name (e.g., Computer Systems Lab, Physics Lab)",
+    )
+    floor = models.IntegerField(
+        default=0,
+        help_text="Floor number (e.g., 0 for Ground, 1 for 1st Floor)",
+    )
+    capacity = models.PositiveIntegerField(
+        default=30,
+        validators=[MinValueValidator(1)],
+        help_text="Lab student capacity (must be > 0)",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.AVAILABLE,
+        help_text="Laboratory availability status (AVAILABLE, UNAVAILABLE, MAINTENANCE)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["building", "lab_number"]
+        verbose_name = "Laboratory"
+        verbose_name_plural = "Laboratories"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["building", "lab_number"],
+                name="unique_laboratory_building_lab",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.building} - {self.lab_number} ({self.name}) [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if self.building:
+            self.building = validate_non_empty_name(self.building, "Building")
+        if self.lab_number:
+            self.lab_number = validate_non_empty_name(self.lab_number, "Lab number")
+        if self.name:
+            self.name = validate_non_empty_name(self.name, "Laboratory name")
+        if self.capacity is not None and self.capacity <= 0:
+            raise ValidationError({"capacity": "Capacity must be a positive integer."})
+        if self.status:
+            self.status = self.status.strip().upper()
+            if self.status not in self.Status.values:
+                raise ValidationError({"status": f"Invalid status '{self.status}'."})
+
+    def save(self, *args, **kwargs):
+        if self.building:
+            self.building = normalize_string(self.building)
+        if self.lab_number:
+            self.lab_number = normalize_string(self.lab_number)
+        if self.name:
+            self.name = normalize_string(self.name)
+        if self.status:
+            self.status = self.status.strip().upper()
+        super().save(*args, **kwargs)
+
+

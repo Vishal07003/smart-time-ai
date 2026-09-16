@@ -1,22 +1,41 @@
-from rest_framework import viewsets
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
 from rest_framework.filters import OrderingFilter, SearchFilter
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.response import Response
 
+from accounts.models import User
+from accounts.permissions import IsStaffRole
 from .models import (
+    Classroom,
     Department,
     Division,
+    Laboratory,
     PracticalBatch,
     Program,
     Semester,
     Subject,
+    TeacherAvailability,
+    TeacherLeave,
+    TeacherSubject,
 )
-from .permissions import IsStaffOrReadOnlyAcademic
+from .permissions import (
+    IsStaffOrReadOnlyAcademic,
+    IsStaffOrTeacherOwnerAvailability,
+    IsStaffOrTeacherOwnerLeave,
+)
 from .serializers import (
+    ClassroomSerializer,
     DepartmentSerializer,
     DivisionSerializer,
+    LaboratorySerializer,
     PracticalBatchSerializer,
     ProgramSerializer,
     SemesterSerializer,
     SubjectSerializer,
+    TeacherAvailabilitySerializer,
+    TeacherLeaveSerializer,
+    TeacherSubjectSerializer,
 )
 
 
@@ -156,3 +175,259 @@ class SubjectViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(type__iexact=subject_type.strip())
 
         return queryset
+
+
+class TeacherSubjectViewSet(viewsets.ModelViewSet):
+    """
+    CRUD ViewSet for TeacherSubject model.
+    - Restricted strictly to STAFF users.
+    - Supports filtering by `?teacher={id}` and `?subject={id}`
+    """
+
+    queryset = TeacherSubject.objects.select_related(
+        "teacher", "teacher__user", "subject", "subject__program"
+    ).all()
+    serializer_class = TeacherSubjectSerializer
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+        "teacher__user__username",
+        "subject__name",
+        "subject__code",
+    ]
+    ordering_fields = [
+        "priority",
+        "created_at",
+        "teacher__employee_code",
+        "subject__code",
+    ]
+    ordering = ["teacher", "priority"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        teacher_id = self.request.query_params.get("teacher")
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+
+        subject_id = self.request.query_params.get("subject")
+        if subject_id:
+            queryset = queryset.filter(subject_id=subject_id)
+
+        return queryset
+
+
+class TeacherAvailabilityViewSet(viewsets.ModelViewSet):
+    """
+    CRUD ViewSet for TeacherAvailability model.
+    - Staff: Full CRUD on all teacher availabilities.
+    - Teacher: Full CRUD on ONLY their own availability.
+    - Others: Denied access.
+    - Supports filtering by `?teacher={id}`, `?day={day}`, and `?is_available={true|false}`
+    """
+
+    queryset = TeacherAvailability.objects.select_related(
+        "teacher", "teacher__user", "teacher__department"
+    ).all()
+    serializer_class = TeacherAvailabilitySerializer
+    permission_classes = [IsAuthenticated, IsStaffOrTeacherOwnerAvailability]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+        "day",
+    ]
+    ordering_fields = [
+        "day",
+        "start_time",
+        "end_time",
+        "created_at",
+        "teacher__employee_code",
+    ]
+    ordering = ["day", "start_time"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if hasattr(user, "role") and user.role == User.Role.TEACHER:
+            return queryset.filter(teacher__user=user)
+
+        teacher_id = self.request.query_params.get("teacher")
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+
+        day = self.request.query_params.get("day")
+        if day:
+            queryset = queryset.filter(day__iexact=day.strip())
+
+        is_available = self.request.query_params.get("is_available")
+        if is_available is not None:
+            if is_available.lower() in ("true", "1"):
+                queryset = queryset.filter(is_available=True)
+            elif is_available.lower() in ("false", "0"):
+                queryset = queryset.filter(is_available=False)
+
+        return queryset
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if hasattr(user, "role") and user.role == User.Role.TEACHER and hasattr(user, "teacher_profile"):
+            serializer.save(teacher=user.teacher_profile)
+        else:
+            serializer.save()
+
+
+class TeacherLeaveViewSet(viewsets.ModelViewSet):
+    """
+    CRUD ViewSet for TeacherLeave model.
+    - Staff: Full CRUD on all leave requests, can approve/reject.
+    - Teacher: View own leaves, create leave request (status PENDING), edit/delete own leaves.
+    - Others: Denied access.
+    - Supports filtering by `?teacher={id}`, `?status={PENDING|APPROVED|REJECTED}`
+    """
+
+    queryset = TeacherLeave.objects.select_related(
+        "teacher", "teacher__user", "teacher__department"
+    ).all()
+    serializer_class = TeacherLeaveSerializer
+    permission_classes = [IsAuthenticated, IsStaffOrTeacherOwnerLeave]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+        "reason",
+        "status",
+    ]
+    ordering_fields = [
+        "start_date",
+        "end_date",
+        "status",
+        "created_at",
+        "teacher__employee_code",
+    ]
+    ordering = ["-start_date", "-created_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if hasattr(user, "role") and user.role == User.Role.TEACHER:
+            return queryset.filter(teacher__user=user)
+
+        teacher_id = self.request.query_params.get("teacher")
+        if teacher_id:
+            queryset = queryset.filter(teacher_id=teacher_id)
+
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status__iexact=status_param.strip())
+
+        return queryset
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        if hasattr(user, "role") and user.role == User.Role.TEACHER and hasattr(user, "teacher_profile"):
+            serializer.save(teacher=user.teacher_profile, status=TeacherLeave.Status.PENDING)
+        else:
+            serializer.save()
+
+    @action(
+        detail=True,
+        methods=["patch"],
+        url_path="status",
+        url_name="status",
+        permission_classes=[IsAuthenticated, IsStaffRole],
+    )
+    def update_status(self, request, pk=None):
+        leave = self.get_object()
+        status_val = request.data.get("status")
+        if not status_val:
+            return Response(
+                {"status": "Status field is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        status_clean = status_val.strip().upper() if isinstance(status_val, str) else status_val
+        if status_clean not in TeacherLeave.Status.values:
+            return Response(
+                {"status": f"Invalid status '{status_val}'."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        leave.status = status_clean
+        leave.save()
+        serializer = self.get_serializer(leave)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ClassroomViewSet(viewsets.ModelViewSet):
+    """
+    CRUD ViewSet for Classroom model.
+    - Staff: Full CRUD
+    - Teacher/Student: Read-only
+    - Supports filtering by `?building={name}` and `?status={AVAILABLE|UNAVAILABLE|MAINTENANCE}`
+    """
+
+    queryset = Classroom.objects.all()
+    serializer_class = ClassroomSerializer
+    permission_classes = [IsStaffOrReadOnlyAcademic]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["building", "room_number"]
+    ordering_fields = [
+        "building",
+        "room_number",
+        "floor",
+        "capacity",
+        "status",
+        "created_at",
+    ]
+    ordering = ["building", "room_number"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        building = self.request.query_params.get("building")
+        if building:
+            queryset = queryset.filter(building__iexact=building.strip())
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status__iexact=status_param.strip())
+        return queryset
+
+
+class LaboratoryViewSet(viewsets.ModelViewSet):
+    """
+    CRUD ViewSet for Laboratory model.
+    - Staff: Full CRUD
+    - Teacher/Student: Read-only
+    - Supports filtering by `?building={name}` and `?status={AVAILABLE|UNAVAILABLE|MAINTENANCE}`
+    """
+
+    queryset = Laboratory.objects.all()
+    serializer_class = LaboratorySerializer
+    permission_classes = [IsStaffOrReadOnlyAcademic]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["building", "lab_number", "name"]
+    ordering_fields = [
+        "building",
+        "lab_number",
+        "name",
+        "floor",
+        "capacity",
+        "status",
+        "created_at",
+    ]
+    ordering = ["building", "lab_number"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        building = self.request.query_params.get("building")
+        if building:
+            queryset = queryset.filter(building__iexact=building.strip())
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status__iexact=status_param.strip())
+        return queryset
+
