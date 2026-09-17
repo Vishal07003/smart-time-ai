@@ -21,6 +21,7 @@ from .models import (
     TeacherLeave,
     TeacherSubject,
     Timetable,
+    TimetableConflict,
     TimetableSlot,
 )
 from .permissions import (
@@ -41,9 +42,11 @@ from .serializers import (
     TeacherAvailabilitySerializer,
     TeacherLeaveSerializer,
     TeacherSubjectSerializer,
+    TimetableConflictSerializer,
     TimetableSerializer,
     TimetableSlotSerializer,
 )
+from .services.conflict_detection import ConflictDetectionService
 
 
 class DepartmentViewSet(viewsets.ModelViewSet):
@@ -530,6 +533,42 @@ class TimetableViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(timetable)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="check-conflicts",
+        url_name="check-conflicts",
+        permission_classes=[IsAuthenticated, IsStaffRole],
+    )
+    def check_conflicts(self, request, pk=None):
+        timetable = self.get_object()
+        service = ConflictDetectionService(timetable)
+        conflicts = service.detect_conflicts()
+        serializer = TimetableConflictSerializer(conflicts, many=True)
+        return Response(
+            {
+                "message": f"Conflict detection completed. Found {len(conflicts)} conflict(s).",
+                "total_conflicts": len(conflicts),
+                "conflicts": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="conflicts",
+        url_name="conflicts",
+        permission_classes=[IsAuthenticated, IsStaffOrReadOnlyPublishedTimetable],
+    )
+    def conflicts(self, request, pk=None):
+        timetable = self.get_object()
+        conflicts = TimetableConflict.objects.filter(timetable=timetable).select_related(
+            "slot", "conflicting_slot", "resolved_by"
+        )
+        serializer = TimetableConflictSerializer(conflicts, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
 
 class TimetableSlotViewSet(viewsets.ModelViewSet):
     """
@@ -626,4 +665,62 @@ class TimetableSlotViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(status__iexact=status_param.strip())
 
         return queryset
+
+
+class TimetableConflictViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    ViewSet for viewing and resolving Timetable Conflicts.
+    - Staff: Full access and can resolve/ignore.
+    - Teacher/Student: Read-only access to conflicts on PUBLISHED timetables.
+    - Supports filtering by `?timetable={id}`, `?conflict_type={type}`, `?status={DETECTED|RESOLVED|IGNORED}`
+    """
+
+    queryset = TimetableConflict.objects.select_related(
+        "timetable", "slot", "conflicting_slot", "resolved_by"
+    ).all()
+    serializer_class = TimetableConflictSerializer
+    permission_classes = [IsAuthenticated, IsStaffOrReadOnlyPublishedTimetable]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["conflict_type", "severity", "description", "status"]
+    ordering_fields = ["severity", "created_at", "status"]
+    ordering = ["-severity", "-created_at"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if hasattr(user, "role") and user.role != User.Role.STAFF:
+            queryset = queryset.filter(timetable__status=Timetable.Status.PUBLISHED)
+
+        timetable_id = self.request.query_params.get("timetable")
+        if timetable_id:
+            queryset = queryset.filter(timetable_id=timetable_id)
+
+        conflict_type = self.request.query_params.get("conflict_type")
+        if conflict_type:
+            queryset = queryset.filter(conflict_type__iexact=conflict_type.strip())
+
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status__iexact=status_param.strip())
+
+        return queryset
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="resolve",
+        url_name="resolve",
+        permission_classes=[IsAuthenticated, IsStaffRole],
+    )
+    def resolve(self, request, pk=None):
+        conflict = self.get_object()
+        from django.utils import timezone
+
+        conflict.status = TimetableConflict.Status.RESOLVED
+        conflict.resolved_by = request.user
+        conflict.resolved_at = timezone.now()
+        conflict.save()
+        serializer = self.get_serializer(conflict)
+        return Response(serializer.data, status=status.HTTP_200_OK)
 

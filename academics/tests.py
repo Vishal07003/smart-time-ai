@@ -1221,3 +1221,319 @@ class TimetableAndSlotAPITests(APITestCase):
         self.assertEqual(res_invalid_time.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertIn("end_time", res_invalid_time.data)
 
+
+class TimetableConflictDetectionAPITests(APITestCase):
+    """
+    Tests for ConflictDetectionService and conflict check endpoints.
+    """
+
+    def setUp(self):
+        from accounts.models import TeacherProfile
+        from academics.models import (
+            Classroom,
+            Department,
+            Division,
+            Laboratory,
+            PracticalBatch,
+            Program,
+            Semester,
+            Subject,
+            Timetable,
+            TimetableConflict,
+            TimetableSlot,
+        )
+
+        self.staff_user = UserModel.objects.create_user(
+            username="cd_staff",
+            email="cd_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher1_user = UserModel.objects.create_user(
+            username="cd_teacher1",
+            email="cd_teacher1@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.teacher2_user = UserModel.objects.create_user(
+            username="cd_teacher2",
+            email="cd_teacher2@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+
+        self.dept = Department.objects.create(name="Conflict Dept", code="CD_DEPT")
+        self.prog = Program.objects.create(department=self.dept, name="B.Tech CD", code="BTECH_CD")
+        self.semester = Semester.objects.create(program=self.prog, number=5, academic_year="2025-2026")
+        self.division1 = Division.objects.create(semester=self.semester, name="Div-1", capacity=60)
+        self.division2 = Division.objects.create(semester=self.semester, name="Div-2", capacity=60)
+        self.batch1 = PracticalBatch.objects.create(division=self.division1, name="B1", capacity=20)
+        self.batch2 = PracticalBatch.objects.create(division=self.division1, name="B2", capacity=20)
+
+        self.subj1 = Subject.objects.create(program=self.prog, name="Data Structures", code="CD_DS")
+        self.subj2 = Subject.objects.create(program=self.prog, name="Networks", code="CD_NET")
+
+        self.teacher1 = TeacherProfile.objects.create(
+            user=self.teacher1_user,
+            employee_code="EMP_CD_01",
+            department=self.dept,
+            designation="Professor",
+        )
+        self.teacher2 = TeacherProfile.objects.create(
+            user=self.teacher2_user,
+            employee_code="EMP_CD_02",
+            department=self.dept,
+            designation="Assistant Professor",
+        )
+
+        self.classroom1 = Classroom.objects.create(building="Main", room_number="R101", capacity=60)
+        self.classroom2 = Classroom.objects.create(building="Main", room_number="R102", capacity=60)
+        self.lab1 = Laboratory.objects.create(building="Tech", lab_number="L1", name="Net Lab", capacity=30)
+        self.lab2 = Laboratory.objects.create(building="Tech", lab_number="L2", name="Sys Lab", capacity=30)
+
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2025-2026",
+            version=1,
+            status=Timetable.Status.DRAFT,
+            created_by=self.staff_user,
+        )
+
+    def test_conflict_detection_service_and_endpoints(self):
+        from academics.models import TimetableConflict, TimetableSlot
+        from academics.services.conflict_detection import ConflictDetectionService
+
+        # Slot 1: Teacher 1 in Classroom 1, Div 1, MONDAY 09:00 - 10:30
+        s1 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division1,
+            subject=self.subj1,
+            teacher=self.teacher1,
+            classroom=self.classroom1,
+            day="MONDAY",
+            start_time="09:00:00",
+            end_time="10:30:00",
+            session_type="LECTURE",
+        )
+
+        # Slot 2 (Overlapping with s1): Teacher 1 in Classroom 2, Div 2, MONDAY 10:00 - 11:00 -> TEACHER_CLASH
+        s2 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division2,
+            subject=self.subj2,
+            teacher=self.teacher1,
+            classroom=self.classroom2,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+        )
+
+        # Slot 3 (Overlapping with s1): Teacher 2 in Classroom 1, Div 2, MONDAY 09:30 - 10:15 -> CLASSROOM_CLASH
+        s3 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division2,
+            subject=self.subj2,
+            teacher=self.teacher2,
+            classroom=self.classroom1,
+            day="MONDAY",
+            start_time="09:30:00",
+            end_time="10:15:00",
+            session_type="LECTURE",
+        )
+
+        # Test via service
+        service = ConflictDetectionService(self.timetable)
+        conflicts = service.detect_conflicts()
+        conflict_types = [c.conflict_type for c in conflicts]
+        self.assertIn("TEACHER_CLASH", conflict_types)
+        self.assertIn("CLASSROOM_CLASH", conflict_types)
+
+        # Test via API check-conflicts endpoint
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        check_url = reverse("academics:timetable-check-conflicts", kwargs={"pk": self.timetable.id})
+        res = self.client.post(check_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertGreaterEqual(res.data["total_conflicts"], 2)
+
+        # Test GET conflicts endpoint
+        conflicts_url = reverse("academics:timetable-conflicts", kwargs={"pk": self.timetable.id})
+        res_get = self.client.get(conflicts_url)
+        self.assertEqual(res_get.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_get.data), res.data["total_conflicts"])
+
+    def test_unordered_slot_pair_single_conflict_and_idempotency(self):
+        """
+        Verify that overlapping slot pairs are treated as unordered, creating only ONE conflict
+        record per conflict type, and repeated check-conflicts calls do not create duplicates.
+        """
+        from academics.models import TimetableConflict, TimetableSlot
+        from academics.services.conflict_detection import ConflictDetectionService
+        from django.db import IntegrityError
+
+        # Create two slots with same teacher and same time
+        s1 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division1,
+            subject=self.subj1,
+            teacher=self.teacher1,
+            classroom=self.classroom1,
+            day="TUESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+        )
+        s2 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division2,
+            subject=self.subj2,
+            teacher=self.teacher1,
+            classroom=self.classroom2,
+            day="TUESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+        )
+
+        service = ConflictDetectionService(self.timetable)
+        conflicts_first = service.detect_conflicts()
+        tuesday_teacher_conflicts = [
+            c for c in conflicts_first
+            if c.conflict_type == TimetableConflict.ConflictType.TEACHER_CLASH
+            and {c.slot_id, c.conflicting_slot_id} == {s1.id, s2.id}
+        ]
+        # Exactly ONE conflict record for this slot pair
+        self.assertEqual(len(tuesday_teacher_conflicts), 1)
+
+        # Canonical ordering: slot.id < conflicting_slot.id
+        c = tuesday_teacher_conflicts[0]
+        self.assertTrue(str(c.slot_id) <= str(c.conflicting_slot_id))
+
+        # Repeated detection calls do not duplicate records
+        conflicts_second = service.detect_conflicts()
+        tuesday_teacher_conflicts_2 = [
+            c for c in conflicts_second
+            if c.conflict_type == TimetableConflict.ConflictType.TEACHER_CLASH
+            and {c.slot_id, c.conflicting_slot_id} == {s1.id, s2.id}
+        ]
+        self.assertEqual(len(tuesday_teacher_conflicts_2), 1)
+
+        # Repeated API calls do not duplicate records
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+        check_url = reverse("academics:timetable-check-conflicts", kwargs={"pk": self.timetable.id})
+        res1 = self.client.post(check_url)
+        res2 = self.client.post(check_url)
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        self.assertEqual(res1.data["total_conflicts"], res2.data["total_conflicts"])
+
+        # Test database constraint directly: creating duplicate reverse or identical pair violates constraint
+        with self.assertRaises(IntegrityError):
+            TimetableConflict.objects.create(
+                timetable=self.timetable,
+                slot=s1,
+                conflicting_slot=s2,
+                conflict_type=TimetableConflict.ConflictType.TEACHER_CLASH,
+                description="Duplicate",
+            )
+
+    def test_different_conflict_types_for_same_pair_remain_separate(self):
+        """
+        Verify that different conflict types between the same two slots
+        (e.g., TEACHER_CLASH and CLASSROOM_CLASH) produce distinct conflict records.
+        """
+        from academics.models import TimetableConflict, TimetableSlot
+        from academics.services.conflict_detection import ConflictDetectionService
+
+        # Two slots that share BOTH same teacher AND same classroom
+        s1 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division1,
+            subject=self.subj1,
+            teacher=self.teacher1,
+            classroom=self.classroom1,
+            day="WEDNESDAY",
+            start_time="14:00:00",
+            end_time="15:30:00",
+            session_type="LECTURE",
+        )
+        s2 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division2,
+            subject=self.subj2,
+            teacher=self.teacher1,
+            classroom=self.classroom1,
+            day="WEDNESDAY",
+            start_time="14:30:00",
+            end_time="16:00:00",
+            session_type="LECTURE",
+        )
+
+        service = ConflictDetectionService(self.timetable)
+        conflicts = service.detect_conflicts()
+        wed_conflicts = [
+            c for c in conflicts
+            if {c.slot_id, c.conflicting_slot_id} == {s1.id, s2.id}
+        ]
+        conflict_types = {c.conflict_type for c in wed_conflicts}
+        self.assertEqual(len(wed_conflicts), 2)
+        self.assertIn(TimetableConflict.ConflictType.TEACHER_CLASH, conflict_types)
+        self.assertIn(TimetableConflict.ConflictType.CLASSROOM_CLASH, conflict_types)
+
+    def test_existing_resolved_and_ignored_conflicts_preserved(self):
+        """
+        Verify that RESOLVED and IGNORED conflicts are preserved and not duplicated or deleted.
+        """
+        from academics.models import TimetableConflict, TimetableSlot
+        from academics.services.conflict_detection import ConflictDetectionService
+
+        s1 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division1,
+            subject=self.subj1,
+            teacher=self.teacher2,
+            classroom=self.classroom2,
+            day="THURSDAY",
+            start_time="11:00:00",
+            end_time="12:00:00",
+            session_type="LECTURE",
+        )
+        s2 = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division2,
+            subject=self.subj2,
+            teacher=self.teacher2,
+            classroom=self.classroom1,
+            day="THURSDAY",
+            start_time="11:30:00",
+            end_time="12:30:00",
+            session_type="LECTURE",
+        )
+
+        service = ConflictDetectionService(self.timetable)
+        conflicts = service.detect_conflicts()
+        thurs_conflict = [
+            c for c in conflicts
+            if {c.slot_id, c.conflicting_slot_id} == {s1.id, s2.id}
+        ][0]
+
+        # Mark conflict as RESOLVED
+        thurs_conflict.status = TimetableConflict.Status.RESOLVED
+        thurs_conflict.resolved_by = self.staff_user
+        thurs_conflict.save()
+
+        # Re-run detection service
+        conflicts_after = service.detect_conflicts()
+        thurs_conflicts_after = [
+            c for c in conflicts_after
+            if {c.slot_id, c.conflicting_slot_id} == {s1.id, s2.id}
+        ]
+        # Should still be exactly 1 record and its status remains RESOLVED
+        self.assertEqual(len(thurs_conflicts_after), 1)
+        self.assertEqual(thurs_conflicts_after[0].status, TimetableConflict.Status.RESOLVED)
+        self.assertEqual(thurs_conflicts_after[0].id, thurs_conflict.id)
+
+
