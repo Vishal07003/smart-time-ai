@@ -68,3 +68,39 @@ class IsStaffOrTeacherOwnerLeave(BasePermission):
             return obj.teacher.user_id == request.user.id
         return False
 
+
+class IsStaffOrReadOnlyPublishedTimetable(BasePermission):
+    """
+    Permission class for Timetables and Timetable Slots:
+    - STAFF: full CRUD access.
+    - TEACHER / STUDENT: read-only access to published timetables/slots.
+    - Unauthenticated: access denied.
+    """
+
+    def has_permission(self, request, view):
+        if not (request.user and request.user.is_authenticated):
+            return False
+
+        if request.method in SAFE_METHODS:
+            return True
+
+        return request.user.role == User.Role.STAFF
+
+    def has_object_permission(self, request, view, obj):
+        if not (request.user and request.user.is_authenticated):
+            return False
+
+        if request.user.role == User.Role.STAFF:
+            return True
+
+        if request.method in SAFE_METHODS:
+            if hasattr(obj, "status") and hasattr(obj, "slots"):
+                # Timetable object
+                return obj.status == "PUBLISHED"
+            elif hasattr(obj, "timetable"):
+                # TimetableSlot object
+                return obj.timetable.status == "PUBLISHED"
+            return True
+
+        return False
+

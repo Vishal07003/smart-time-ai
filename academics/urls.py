@@ -12,6 +12,8 @@ from .views import (
     TeacherAvailabilityViewSet,
     TeacherLeaveViewSet,
     TeacherSubjectViewSet,
+    TimetableSlotViewSet,
+    TimetableViewSet,
 )
 
 app_name = "academics"
@@ -29,5 +31,7 @@ router.register("teacher-availability", TeacherAvailabilityViewSet, basename="te
 router.register("teacher-leaves", TeacherLeaveViewSet, basename="teacher-leave")
 router.register("classrooms", ClassroomViewSet, basename="classroom")
 router.register("laboratories", LaboratoryViewSet, basename="laboratory")
+router.register("timetables", TimetableViewSet, basename="timetable")
+router.register("timetable-slots", TimetableSlotViewSet, basename="timetable-slot")
 
 urlpatterns = router.urls

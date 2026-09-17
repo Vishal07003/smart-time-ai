@@ -12,6 +12,8 @@ from .models import (
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
+    Timetable,
+    TimetableSlot,
 )
 
 
@@ -222,5 +224,63 @@ class LaboratoryAdmin(admin.ModelAdmin):
         "name",
     )
     ordering = ("building", "lab_number")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(Timetable)
+class TimetableAdmin(admin.ModelAdmin):
+    list_display = (
+        "semester",
+        "academic_year",
+        "version",
+        "status",
+        "created_by",
+        "published_at",
+        "created_at",
+    )
+    list_filter = (
+        "status",
+        "academic_year",
+        "semester__program__department",
+        "semester__program",
+    )
+    search_fields = (
+        "semester__program__name",
+        "semester__program__code",
+        "academic_year",
+    )
+    ordering = ("-academic_year", "semester", "-version")
+    readonly_fields = ("id", "published_at", "created_at", "updated_at")
+
+
+@admin.register(TimetableSlot)
+class TimetableSlotAdmin(admin.ModelAdmin):
+    list_display = (
+        "timetable",
+        "division",
+        "batch",
+        "subject",
+        "teacher",
+        "day",
+        "start_time",
+        "end_time",
+        "session_type",
+        "status",
+    )
+    list_filter = (
+        "day",
+        "session_type",
+        "status",
+        "timetable__semester__program",
+    )
+    search_fields = (
+        "subject__name",
+        "subject__code",
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+        "division__name",
+    )
+    ordering = ("timetable", "day", "start_time")
     readonly_fields = ("id", "created_at", "updated_at")
 
