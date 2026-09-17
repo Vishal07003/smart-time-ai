@@ -12,6 +12,8 @@ from .models import (
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
+    Timetable,
+    TimetableSlot,
 )
 from .validators import (
     normalize_code,
@@ -736,6 +738,225 @@ class LaboratorySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "A laboratory with this lab number already exists in this building."
                 )
+
+        return attrs
+
+
+class TimetableSerializer(serializers.ModelSerializer):
+    """
+    Serializer for Timetable model.
+    Workflow: DRAFT -> GENERATED -> REVIEW -> PUBLISHED -> ARCHIVED
+    """
+
+    semester_number = serializers.IntegerField(
+        source="semester.number", read_only=True
+    )
+    program_code = serializers.CharField(
+        source="semester.program.code", read_only=True
+    )
+    program_name = serializers.CharField(
+        source="semester.program.name", read_only=True
+    )
+    created_by_username = serializers.CharField(
+        source="created_by.username", read_only=True
+    )
+
+    class Meta:
+        model = Timetable
+        fields = [
+            "id",
+            "semester",
+            "semester_number",
+            "program_code",
+            "program_name",
+            "academic_year",
+            "version",
+            "status",
+            "created_by",
+            "created_by_username",
+            "published_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "semester_number",
+            "program_code",
+            "program_name",
+            "created_by",
+            "created_by_username",
+            "published_at",
+            "created_at",
+            "updated_at",
+        ]
+
+    def validate_academic_year(self, value):
+        return validate_academic_year(value)
+
+    def validate_version(self, value):
+        if value < 1:
+            raise serializers.ValidationError("Version must be a positive integer greater than 0.")
+        return value
+
+    def validate_status(self, value):
+        cleaned = value.strip().upper() if isinstance(value, str) else value
+        if cleaned not in Timetable.Status.values:
+            raise serializers.ValidationError(f"Invalid status '{value}'.")
+        return cleaned
+
+    def validate(self, attrs):
+        if self.instance and self.instance.status == Timetable.Status.ARCHIVED:
+            raise serializers.ValidationError("Cannot edit an ARCHIVED timetable.")
+
+        semester = attrs.get("semester") or (self.instance.semester if self.instance else None)
+        academic_year = attrs.get("academic_year") or (self.instance.academic_year if self.instance else None)
+        version = attrs.get("version") or (self.instance.version if self.instance else None)
+
+        if semester and academic_year and version:
+            qs = Timetable.objects.filter(
+                semester=semester,
+                academic_year=academic_year.strip(),
+                version=version,
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                raise serializers.ValidationError(
+                    "A timetable with this semester, academic year, and version already exists."
+                )
+
+        return attrs
+
+
+class TimetableSlotSerializer(serializers.ModelSerializer):
+    """
+    Serializer for TimetableSlot model.
+    """
+
+    division_name = serializers.CharField(
+        source="division.name", read_only=True
+    )
+    batch_name = serializers.CharField(
+        source="batch.name", read_only=True
+    )
+    subject_code = serializers.CharField(
+        source="subject.code", read_only=True
+    )
+    subject_name = serializers.CharField(
+        source="subject.name", read_only=True
+    )
+    teacher_employee_code = serializers.CharField(
+        source="teacher.employee_code", read_only=True
+    )
+    teacher_name = serializers.CharField(
+        source="teacher.user.get_full_name", read_only=True
+    )
+    classroom_name = serializers.SerializerMethodField()
+    laboratory_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TimetableSlot
+        fields = [
+            "id",
+            "timetable",
+            "division",
+            "division_name",
+            "batch",
+            "batch_name",
+            "subject",
+            "subject_code",
+            "subject_name",
+            "teacher",
+            "teacher_employee_code",
+            "teacher_name",
+            "classroom",
+            "classroom_name",
+            "laboratory",
+            "laboratory_name",
+            "day",
+            "start_time",
+            "end_time",
+            "session_type",
+            "status",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "division_name",
+            "batch_name",
+            "subject_code",
+            "subject_name",
+            "teacher_employee_code",
+            "teacher_name",
+            "classroom_name",
+            "laboratory_name",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_classroom_name(self, obj):
+        if obj.classroom:
+            return f"{obj.classroom.building} - {obj.classroom.room_number}"
+        return None
+
+    def get_laboratory_name(self, obj):
+        if obj.laboratory:
+            return f"{obj.laboratory.building} - {obj.laboratory.lab_number} ({obj.laboratory.name})"
+        return None
+
+    def validate_day(self, value):
+        cleaned = value.strip().upper() if isinstance(value, str) else value
+        if cleaned not in TimetableSlot.Day.values:
+            raise serializers.ValidationError(f"Invalid day '{value}'.")
+        return cleaned
+
+    def validate_session_type(self, value):
+        cleaned = value.strip().upper() if isinstance(value, str) else value
+        if cleaned not in TimetableSlot.SessionType.values:
+            raise serializers.ValidationError(f"Invalid session type '{value}'.")
+        return cleaned
+
+    def validate_status(self, value):
+        cleaned = value.strip().upper() if isinstance(value, str) else value
+        if cleaned not in TimetableSlot.Status.values:
+            raise serializers.ValidationError(f"Invalid status '{value}'.")
+        return cleaned
+
+    def validate(self, attrs):
+        timetable = attrs.get("timetable") or (self.instance.timetable if self.instance else None)
+        division = attrs.get("division") or (self.instance.division if self.instance else None)
+        batch = attrs.get("batch") if "batch" in attrs else (self.instance.batch if self.instance else None)
+        subject = attrs.get("subject") or (self.instance.subject if self.instance else None)
+        teacher = attrs.get("teacher") or (self.instance.teacher if self.instance else None)
+        classroom = attrs.get("classroom") if "classroom" in attrs else (self.instance.classroom if self.instance else None)
+        laboratory = attrs.get("laboratory") if "laboratory" in attrs else (self.instance.laboratory if self.instance else None)
+        session_type = attrs.get("session_type") or (self.instance.session_type if self.instance else TimetableSlot.SessionType.LECTURE)
+        start_time = attrs.get("start_time") or (self.instance.start_time if self.instance else None)
+        end_time = attrs.get("end_time") or (self.instance.end_time if self.instance else None)
+
+        if timetable and timetable.status == Timetable.Status.ARCHIVED:
+            raise serializers.ValidationError({"timetable": "Cannot create or modify slots for an ARCHIVED timetable."})
+
+        if start_time and end_time and start_time >= end_time:
+            raise serializers.ValidationError({"end_time": "End time must be strictly after start time."})
+
+        if division and timetable and division.semester_id != timetable.semester_id:
+            raise serializers.ValidationError(
+                {"division": "Selected division does not belong to the timetable's semester."}
+            )
+
+        if batch and division and batch.division_id != division.id:
+            raise serializers.ValidationError(
+                {"batch": "Selected batch does not belong to the specified division."}
+            )
+
+        if session_type == TimetableSlot.SessionType.PRACTICAL:
+            if not laboratory and not classroom:
+                raise serializers.ValidationError({"laboratory": "Practical sessions should have an assigned laboratory."})
+        elif session_type in (TimetableSlot.SessionType.LECTURE, TimetableSlot.SessionType.TUTORIAL):
+            if not classroom and not laboratory:
+                raise serializers.ValidationError({"classroom": "Lecture and tutorial sessions should have an assigned classroom."})
 
         return attrs
 

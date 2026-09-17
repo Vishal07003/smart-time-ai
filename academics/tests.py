@@ -1068,3 +1068,156 @@ class ClassroomAndLaboratoryAPITests(APITestCase):
         res_s_delete = self.client.delete(self.lab_detail_url)
         self.assertEqual(res_s_delete.status_code, status.HTTP_403_FORBIDDEN)
 
+
+class TimetableAndSlotAPITests(APITestCase):
+    """
+    CRUD, permission, and workflow tests for Timetable and TimetableSlot.
+    """
+
+    def setUp(self):
+        from accounts.models import StudentProfile, TeacherProfile
+        from academics.models import (
+            Classroom,
+            Department,
+            Division,
+            Laboratory,
+            PracticalBatch,
+            Program,
+            Semester,
+            Subject,
+            Timetable,
+            TimetableSlot,
+        )
+
+        self.staff_user = UserModel.objects.create_user(
+            username="tt_staff",
+            email="tt_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_user = UserModel.objects.create_user(
+            username="tt_teacher",
+            email="tt_teacher@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="tt_student",
+            email="tt_student@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        self.dept = Department.objects.create(name="Computer Engg", code="CE_TT")
+        self.prog = Program.objects.create(department=self.dept, name="B.Tech CE", code="BTECH_CE")
+        self.semester = Semester.objects.create(program=self.prog, number=4, academic_year="2025-2026")
+        self.division = Division.objects.create(semester=self.semester, name="Div-A", capacity=60)
+        self.batch = PracticalBatch.objects.create(division=self.division, name="B1", capacity=20)
+        self.subject = Subject.objects.create(program=self.prog, name="Algorithms", code="CE_ALG")
+
+        self.teacher_profile = TeacherProfile.objects.create(
+            user=self.teacher_user,
+            employee_code="EMP_TT_01",
+            department=self.dept,
+            designation="Associate Professor",
+        )
+        self.student_profile = StudentProfile.objects.create(
+            user=self.student_user,
+            roll_number="ROLL_TT_01",
+            admission_year=2025,
+            division=self.division,
+            batch=self.batch,
+        )
+
+        self.classroom = Classroom.objects.create(
+            building="Academic Block", room_number="CR-201", capacity=60
+        )
+        self.laboratory = Laboratory.objects.create(
+            building="Academic Block", lab_number="LAB-101", name="Algorithm Lab", capacity=30
+        )
+
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2025-2026",
+            version=1,
+            status=Timetable.Status.DRAFT,
+            created_by=self.staff_user,
+        )
+
+        self.slot = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            subject=self.subject,
+            teacher=self.teacher_profile,
+            classroom=self.classroom,
+            day="MONDAY",
+            start_time="09:00:00",
+            end_time="10:00:00",
+            session_type="LECTURE",
+        )
+
+        self.tt_list_url = reverse("academics:timetable-list")
+        self.tt_detail_url = reverse("academics:timetable-detail", kwargs={"pk": self.timetable.id})
+        self.slot_list_url = reverse("academics:timetable-slot-list")
+        self.slot_detail_url = reverse("academics:timetable-slot-detail", kwargs={"pk": self.slot.id})
+
+    def test_timetable_crud_and_publishing_workflow(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # Staff can list drafts
+        res_list = self.client.get(self.tt_list_url)
+        self.assertEqual(res_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_list.data), 1)
+
+        # Teacher cannot see draft timetable
+        refresh_t = RefreshToken.for_user(self.teacher_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_t.access_token}")
+        res_t_list = self.client.get(self.tt_list_url)
+        self.assertEqual(res_t_list.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_t_list.data), 0)
+
+        # Staff publishes timetable via action
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+        publish_url = reverse("academics:timetable-publish", kwargs={"pk": self.timetable.id})
+        res_pub = self.client.post(publish_url)
+        self.assertEqual(res_pub.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_pub.data["status"], "PUBLISHED")
+        self.assertIsNotNone(res_pub.data["published_at"])
+
+        # Teacher can now view published timetable
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_t.access_token}")
+        res_t_pub = self.client.get(self.tt_list_url)
+        self.assertEqual(res_t_pub.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_t_pub.data), 1)
+
+        # Student can view slots in published timetable
+        refresh_s = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_s.access_token}")
+        res_s_slots = self.client.get(self.slot_list_url)
+        self.assertEqual(res_s_slots.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_s_slots.data), 1)
+
+    def test_timetable_slot_validation(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # Invalid start_time >= end_time
+        res_invalid_time = self.client.post(
+            self.slot_list_url,
+            {
+                "timetable": str(self.timetable.id),
+                "division": str(self.division.id),
+                "subject": str(self.subject.id),
+                "teacher": str(self.teacher_profile.id),
+                "classroom": str(self.classroom.id),
+                "day": "TUESDAY",
+                "start_time": "11:00:00",
+                "end_time": "10:00:00",
+                "session_type": "LECTURE",
+            },
+            format="json",
+        )
+        self.assertEqual(res_invalid_time.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("end_time", res_invalid_time.data)
+

@@ -12,13 +12,10 @@ from .validators import (
     validate_code_format,
     validate_non_empty_name,
 )
-
-
 class Department(models.Model):
     """
     Academic Department (e.g. Computer Science, Mechanical Engineering).
     """
-
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     name = models.CharField(
         max_length=150,
@@ -756,6 +753,259 @@ class Laboratory(models.Model):
             self.lab_number = normalize_string(self.lab_number)
         if self.name:
             self.name = normalize_string(self.name)
+        if self.status:
+            self.status = self.status.strip().upper()
+        super().save(*args, **kwargs)
+
+
+class Timetable(models.Model):
+    """
+    Timetable version for a Semester and Academic Year.
+    Workflow: DRAFT -> GENERATED -> REVIEW -> PUBLISHED -> ARCHIVED
+    """
+
+    class Status(models.TextChoices):
+        DRAFT = "DRAFT", "Draft"
+        GENERATED = "GENERATED", "Generated"
+        REVIEW = "REVIEW", "Review"
+        PUBLISHED = "PUBLISHED", "Published"
+        ARCHIVED = "ARCHIVED", "Archived"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    semester = models.ForeignKey(
+        "academics.Semester",
+        on_delete=models.CASCADE,
+        related_name="timetables",
+        help_text="Semester for this timetable",
+    )
+    academic_year = models.CharField(
+        max_length=9,
+        help_text="Academic year in YYYY-YYYY format (e.g. 2025-2026)",
+    )
+    version = models.PositiveIntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text="Version number of this timetable configuration",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        help_text="Current timetable lifecycle status",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_timetables",
+        help_text="Staff user who created this timetable",
+    )
+    published_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when the timetable was published",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-academic_year", "semester", "-version"]
+        verbose_name = "Timetable"
+        verbose_name_plural = "Timetables"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["semester", "academic_year", "version"],
+                name="unique_semester_year_version_timetable",
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.semester} ({self.academic_year}) v{self.version} [{self.status}]"
+
+    def clean(self):
+        super().clean()
+        if self.academic_year:
+            self.academic_year = validate_academic_year(self.academic_year)
+        if self.status:
+            self.status = self.status.strip().upper()
+            if self.status not in self.Status.values:
+                raise ValidationError({"status": f"Invalid status '{self.status}'."})
+
+        if self.status == self.Status.PUBLISHED and not self.published_at:
+            from django.utils import timezone
+            self.published_at = timezone.now()
+
+    def save(self, *args, **kwargs):
+        if self.academic_year:
+            self.academic_year = self.academic_year.strip()
+        if self.status:
+            self.status = self.status.strip().upper()
+            if self.status == self.Status.PUBLISHED and not self.published_at:
+                from django.utils import timezone
+                self.published_at = timezone.now()
+        super().save(*args, **kwargs)
+
+
+class TimetableSlot(models.Model):
+    """
+    Individual scheduled slot within a Timetable.
+    """
+
+    class Day(models.TextChoices):
+        MONDAY = "MONDAY", "Monday"
+        TUESDAY = "TUESDAY", "Tuesday"
+        WEDNESDAY = "WEDNESDAY", "Wednesday"
+        THURSDAY = "THURSDAY", "Thursday"
+        FRIDAY = "FRIDAY", "Friday"
+        SATURDAY = "SATURDAY", "Saturday"
+        SUNDAY = "SUNDAY", "Sunday"
+
+    class SessionType(models.TextChoices):
+        LECTURE = "LECTURE", "Lecture"
+        PRACTICAL = "PRACTICAL", "Practical"
+        TUTORIAL = "TUTORIAL", "Tutorial"
+
+    class Status(models.TextChoices):
+        SCHEDULED = "SCHEDULED", "Scheduled"
+        CANCELLED = "CANCELLED", "Cancelled"
+        RESCHEDULED = "RESCHEDULED", "Rescheduled"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timetable = models.ForeignKey(
+        Timetable,
+        on_delete=models.CASCADE,
+        related_name="slots",
+        help_text="Parent timetable",
+    )
+    division = models.ForeignKey(
+        "academics.Division",
+        on_delete=models.CASCADE,
+        related_name="timetable_slots",
+        help_text="Class division",
+    )
+    batch = models.ForeignKey(
+        "academics.PracticalBatch",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="timetable_slots",
+        help_text="Practical/Lab batch (if practical or batch-specific)",
+    )
+    subject = models.ForeignKey(
+        "academics.Subject",
+        on_delete=models.CASCADE,
+        related_name="timetable_slots",
+        help_text="Subject/Course for this slot",
+    )
+    teacher = models.ForeignKey(
+        "accounts.TeacherProfile",
+        on_delete=models.CASCADE,
+        related_name="timetable_slots",
+        help_text="Assigned teacher",
+    )
+    classroom = models.ForeignKey(
+        "academics.Classroom",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="timetable_slots",
+        help_text="Classroom allocated for lecture/tutorial session",
+    )
+    laboratory = models.ForeignKey(
+        "academics.Laboratory",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="timetable_slots",
+        help_text="Laboratory allocated for practical session",
+    )
+    day = models.CharField(
+        max_length=15,
+        choices=Day.choices,
+        help_text="Day of the week",
+    )
+    start_time = models.TimeField(
+        help_text="Slot start time",
+    )
+    end_time = models.TimeField(
+        help_text="Slot end time",
+    )
+    session_type = models.CharField(
+        max_length=15,
+        choices=SessionType.choices,
+        default=SessionType.LECTURE,
+        help_text="Type of academic session (LECTURE, PRACTICAL, TUTORIAL)",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.SCHEDULED,
+        help_text="Slot status (SCHEDULED, CANCELLED, RESCHEDULED)",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["timetable", "day", "start_time"]
+        verbose_name = "Timetable Slot"
+        verbose_name_plural = "Timetable Slots"
+
+    def __str__(self):
+        return f"{self.timetable} | {self.day} {self.start_time}-{self.end_time} | {self.subject.code} ({self.session_type})"
+
+    def clean(self):
+        super().clean()
+        if self.day:
+            self.day = self.day.strip().upper()
+            if self.day not in self.Day.values:
+                raise ValidationError({"day": f"Invalid day '{self.day}'."})
+
+        if self.session_type:
+            self.session_type = self.session_type.strip().upper()
+            if self.session_type not in self.SessionType.values:
+                raise ValidationError({"session_type": f"Invalid session type '{self.session_type}'."})
+
+        if self.status:
+            self.status = self.status.strip().upper()
+            if self.status not in self.Status.values:
+                raise ValidationError({"status": f"Invalid status '{self.status}'."})
+
+        if self.start_time and self.end_time:
+            if self.start_time >= self.end_time:
+                raise ValidationError({"end_time": "End time must be strictly after start time."})
+
+        # Validate timetable status: cannot add/modify slots for ARCHIVED timetables
+        if self.timetable_id and self.timetable.status == Timetable.Status.ARCHIVED:
+            raise ValidationError({"timetable": "Cannot create or modify slots for an ARCHIVED timetable."})
+
+        # Context validation: division must belong to timetable's semester
+        if self.division_id and self.timetable_id:
+            if self.division.semester_id != self.timetable.semester_id:
+                raise ValidationError(
+                    {"division": "Selected division does not belong to the timetable's semester."}
+                )
+
+        # Batch validation: batch must belong to division
+        if self.batch_id and self.division_id:
+            if self.batch.division_id != self.division_id:
+                raise ValidationError(
+                    {"batch": "Selected batch does not belong to the specified division."}
+                )
+
+        # Practical vs Lecture resource validation
+        if self.session_type == self.SessionType.PRACTICAL:
+            if not self.laboratory_id and not self.classroom_id:
+                raise ValidationError({"laboratory": "Practical sessions should have an assigned laboratory."})
+        elif self.session_type in (self.SessionType.LECTURE, self.SessionType.TUTORIAL):
+            if not self.classroom_id and not self.laboratory_id:
+                raise ValidationError({"classroom": "Lecture and tutorial sessions should have an assigned classroom."})
+
+    def save(self, *args, **kwargs):
+        if self.day:
+            self.day = self.day.strip().upper()
+        if self.session_type:
+            self.session_type = self.session_type.strip().upper()
         if self.status:
             self.status = self.status.strip().upper()
         super().save(*args, **kwargs)

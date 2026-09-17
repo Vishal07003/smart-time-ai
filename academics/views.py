@@ -1,5 +1,7 @@
+from django.db.models import Q
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
@@ -18,9 +20,12 @@ from .models import (
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
+    Timetable,
+    TimetableSlot,
 )
 from .permissions import (
     IsStaffOrReadOnlyAcademic,
+    IsStaffOrReadOnlyPublishedTimetable,
     IsStaffOrTeacherOwnerAvailability,
     IsStaffOrTeacherOwnerLeave,
 )
@@ -36,6 +41,8 @@ from .serializers import (
     TeacherAvailabilitySerializer,
     TeacherLeaveSerializer,
     TeacherSubjectSerializer,
+    TimetableSerializer,
+    TimetableSlotSerializer,
 )
 
 
@@ -429,5 +436,194 @@ class LaboratoryViewSet(viewsets.ModelViewSet):
         status_param = self.request.query_params.get("status")
         if status_param:
             queryset = queryset.filter(status__iexact=status_param.strip())
+        return queryset
+
+
+class TimetableViewSet(viewsets.ModelViewSet):
+    """
+    CRUD ViewSet for Timetable model.
+    - Staff: Full CRUD and publishing/archiving actions.
+    - Teacher/Student: Read-only access to PUBLISHED timetables only.
+    - Supports filtering by `?semester={id}`, `?academic_year={year}`, `?status={status}`
+    """
+
+    queryset = Timetable.objects.select_related(
+        "semester", "semester__program", "semester__program__department", "created_by"
+    ).all()
+    serializer_class = TimetableSerializer
+    permission_classes = [IsAuthenticated, IsStaffOrReadOnlyPublishedTimetable]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "semester__program__name",
+        "semester__program__code",
+        "academic_year",
+        "status",
+    ]
+    ordering_fields = [
+        "academic_year",
+        "version",
+        "status",
+        "created_at",
+        "published_at",
+    ]
+    ordering = ["-academic_year", "semester", "-version"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if hasattr(user, "role") and user.role != User.Role.STAFF:
+            queryset = queryset.filter(status=Timetable.Status.PUBLISHED)
+
+        semester_id = self.request.query_params.get("semester")
+        if semester_id:
+            queryset = queryset.filter(semester_id=semester_id)
+
+        academic_year = self.request.query_params.get("academic_year")
+        if academic_year:
+            queryset = queryset.filter(academic_year__iexact=academic_year.strip())
+
+        status_param = self.request.query_params.get("status")
+        if status_param and hasattr(user, "role") and user.role == User.Role.STAFF:
+            queryset = queryset.filter(status__iexact=status_param.strip())
+
+        return queryset
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    def perform_destroy(self, instance):
+        if instance.status == Timetable.Status.PUBLISHED:
+            raise ValidationError(
+                "Cannot delete a PUBLISHED timetable. Please un-publish or archive it first."
+            )
+        instance.delete()
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="publish",
+        url_name="publish",
+        permission_classes=[IsAuthenticated, IsStaffRole],
+    )
+    def publish(self, request, pk=None):
+        timetable = self.get_object()
+        from django.utils import timezone
+
+        timetable.status = Timetable.Status.PUBLISHED
+        timetable.published_at = timezone.now()
+        timetable.save()
+        serializer = self.get_serializer(timetable)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["post"],
+        url_path="archive",
+        url_name="archive",
+        permission_classes=[IsAuthenticated, IsStaffRole],
+    )
+    def archive(self, request, pk=None):
+        timetable = self.get_object()
+        timetable.status = Timetable.Status.ARCHIVED
+        timetable.save()
+        serializer = self.get_serializer(timetable)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class TimetableSlotViewSet(viewsets.ModelViewSet):
+    """
+    CRUD ViewSet for TimetableSlot model.
+    - Staff: Full CRUD.
+    - Teacher: Read-only access to published timetables (or own scheduled slots).
+    - Student: Read-only access to published timetable slots for their division/batch.
+    - Supports filtering by `?timetable={id}`, `?division={id}`, `?batch={id}`, `?teacher={id}`, `?day={day}`, `?session_type={type}`
+    """
+
+    queryset = TimetableSlot.objects.select_related(
+        "timetable",
+        "timetable__semester",
+        "division",
+        "batch",
+        "subject",
+        "teacher",
+        "teacher__user",
+        "classroom",
+        "laboratory",
+    ).all()
+    serializer_class = TimetableSlotSerializer
+    permission_classes = [IsAuthenticated, IsStaffOrReadOnlyPublishedTimetable]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "subject__name",
+        "subject__code",
+        "teacher__employee_code",
+        "teacher__user__first_name",
+        "teacher__user__last_name",
+        "division__name",
+        "day",
+    ]
+    ordering_fields = [
+        "day",
+        "start_time",
+        "end_time",
+        "session_type",
+        "status",
+        "created_at",
+    ]
+    ordering = ["timetable", "day", "start_time"]
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+
+        if hasattr(user, "role") and user.role == User.Role.TEACHER:
+            queryset = queryset.filter(timetable__status=Timetable.Status.PUBLISHED)
+            if hasattr(user, "teacher_profile"):
+                queryset = queryset.filter(teacher=user.teacher_profile)
+        elif hasattr(user, "role") and user.role == User.Role.STUDENT:
+            queryset = queryset.filter(timetable__status=Timetable.Status.PUBLISHED)
+            if hasattr(user, "student_profile"):
+                if user.student_profile.division_id:
+                    if user.student_profile.batch_id:
+                        queryset = queryset.filter(
+                            division_id=user.student_profile.division_id
+                        ).filter(
+                            Q(batch_id=user.student_profile.batch_id)
+                            | Q(batch__isnull=True)
+                        )
+                    else:
+                        queryset = queryset.filter(
+                            division_id=user.student_profile.division_id
+                        )
+
+        timetable_id = self.request.query_params.get("timetable")
+        if timetable_id:
+            queryset = queryset.filter(timetable_id=timetable_id)
+
+        division_id = self.request.query_params.get("division")
+        if division_id:
+            queryset = queryset.filter(division_id=division_id)
+
+        batch_id = self.request.query_params.get("batch")
+        if batch_id:
+            queryset = queryset.filter(batch_id=batch_id)
+
+        teacher_id = self.request.query_params.get("teacher")
+        if teacher_id and (not hasattr(user, "role") or user.role == User.Role.STAFF):
+            queryset = queryset.filter(teacher_id=teacher_id)
+
+        day = self.request.query_params.get("day")
+        if day:
+            queryset = queryset.filter(day__iexact=day.strip())
+
+        session_type = self.request.query_params.get("session_type")
+        if session_type:
+            queryset = queryset.filter(session_type__iexact=session_type.strip())
+
+        status_param = self.request.query_params.get("status")
+        if status_param:
+            queryset = queryset.filter(status__iexact=status_param.strip())
+
         return queryset
 
