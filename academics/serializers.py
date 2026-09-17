@@ -13,6 +13,7 @@ from .models import (
     TeacherLeave,
     TeacherSubject,
     Timetable,
+    TimetableConflict,
     TimetableSlot,
 )
 from .validators import (
@@ -959,5 +960,77 @@ class TimetableSlotSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"classroom": "Lecture and tutorial sessions should have an assigned classroom."})
 
         return attrs
+
+
+class TimetableConflictSerializer(serializers.ModelSerializer):
+    """
+    Serializer for TimetableConflict model.
+    """
+
+    slot_info = serializers.SerializerMethodField()
+    conflicting_slot_info = serializers.SerializerMethodField()
+    resolved_by_username = serializers.CharField(
+        source="resolved_by.username", read_only=True
+    )
+
+    class Meta:
+        model = TimetableConflict
+        fields = [
+            "id",
+            "timetable",
+            "slot",
+            "slot_info",
+            "conflicting_slot",
+            "conflicting_slot_info",
+            "conflict_type",
+            "severity",
+            "description",
+            "status",
+            "resolved_by",
+            "resolved_by_username",
+            "resolved_at",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "slot_info",
+            "conflicting_slot_info",
+            "resolved_by_username",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_slot_info(self, obj):
+        if obj.slot:
+            return {
+                "id": str(obj.slot.id),
+                "day": obj.slot.day,
+                "start_time": str(obj.slot.start_time),
+                "end_time": str(obj.slot.end_time),
+                "subject_code": obj.slot.subject.code,
+                "division_name": obj.slot.division.name,
+                "teacher_name": (
+                    obj.slot.teacher.user.get_full_name()
+                    or obj.slot.teacher.user.username
+                ),
+            }
+        return None
+
+    def get_conflicting_slot_info(self, obj):
+        if obj.conflicting_slot:
+            return {
+                "id": str(obj.conflicting_slot.id),
+                "day": obj.conflicting_slot.day,
+                "start_time": str(obj.conflicting_slot.start_time),
+                "end_time": str(obj.conflicting_slot.end_time),
+                "subject_code": obj.conflicting_slot.subject.code,
+                "division_name": obj.conflicting_slot.division.name,
+                "teacher_name": (
+                    obj.conflicting_slot.teacher.user.get_full_name()
+                    or obj.conflicting_slot.teacher.user.username
+                ),
+            }
+        return None
 
 

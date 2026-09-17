@@ -1011,3 +1011,115 @@ class TimetableSlot(models.Model):
         super().save(*args, **kwargs)
 
 
+class TimetableConflict(models.Model):
+    """
+    Detected clash/conflict record within a Timetable.
+    """
+
+    class ConflictType(models.TextChoices):
+        TEACHER_CLASH = "TEACHER_CLASH", "Teacher Clash"
+        CLASSROOM_CLASH = "CLASSROOM_CLASH", "Classroom Clash"
+        LAB_CLASH = "LAB_CLASH", "Laboratory Clash"
+        DIVISION_CLASH = "DIVISION_CLASH", "Division Clash"
+        BATCH_CLASH = "BATCH_CLASH", "Batch Clash"
+
+    class Severity(models.TextChoices):
+        HIGH = "HIGH", "High"
+        MEDIUM = "MEDIUM", "Medium"
+        LOW = "LOW", "Low"
+
+    class Status(models.TextChoices):
+        DETECTED = "DETECTED", "Detected"
+        RESOLVED = "RESOLVED", "Resolved"
+        IGNORED = "IGNORED", "Ignored"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timetable = models.ForeignKey(
+        Timetable,
+        on_delete=models.CASCADE,
+        related_name="conflicts",
+        help_text="Associated timetable",
+    )
+    slot = models.ForeignKey(
+        TimetableSlot,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="conflicts",
+        help_text="Primary timetable slot involved in this conflict",
+    )
+    conflicting_slot = models.ForeignKey(
+        TimetableSlot,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="reverse_conflicts",
+        help_text="Secondary timetable slot involved in this conflict",
+    )
+    conflict_type = models.CharField(
+        max_length=20,
+        choices=ConflictType.choices,
+        help_text="Type of conflict detected",
+    )
+    severity = models.CharField(
+        max_length=10,
+        choices=Severity.choices,
+        default=Severity.HIGH,
+        help_text="Severity level of the conflict",
+    )
+    description = models.TextField(
+        help_text="Detailed description of the clash/conflict",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.DETECTED,
+        help_text="Current conflict status",
+    )
+    resolved_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="resolved_conflicts",
+        help_text="Staff user who resolved this conflict",
+    )
+    resolved_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when the conflict was marked resolved",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-severity", "-created_at"]
+        verbose_name = "Timetable Conflict"
+        verbose_name_plural = "Timetable Conflicts"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["timetable", "conflict_type", "slot", "conflicting_slot"],
+                name="unique_timetable_conflict_pair",
+            ),
+        ]
+
+    def __str__(self):
+        return f"[{self.severity}] {self.conflict_type} on {self.timetable} ({self.status})"
+
+    def clean(self):
+        super().clean()
+        if self.slot_id and self.conflicting_slot_id:
+            if str(self.slot_id) > str(self.conflicting_slot_id):
+                s1, s2 = self.slot, self.conflicting_slot
+                self.slot = s2
+                self.conflicting_slot = s1
+
+    def save(self, *args, **kwargs):
+        if self.slot_id and self.conflicting_slot_id:
+            if str(self.slot_id) > str(self.conflicting_slot_id):
+                s1, s2 = self.slot, self.conflicting_slot
+                self.slot = s2
+                self.conflicting_slot = s1
+        super().save(*args, **kwargs)
+
+

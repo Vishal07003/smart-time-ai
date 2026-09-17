@@ -12,6 +12,7 @@ from .views import (
     TeacherAvailabilityViewSet,
     TeacherLeaveViewSet,
     TeacherSubjectViewSet,
+    TimetableConflictViewSet,
     TimetableSlotViewSet,
     TimetableViewSet,
 )
@@ -33,5 +34,6 @@ router.register("classrooms", ClassroomViewSet, basename="classroom")
 router.register("laboratories", LaboratoryViewSet, basename="laboratory")
 router.register("timetables", TimetableViewSet, basename="timetable")
 router.register("timetable-slots", TimetableSlotViewSet, basename="timetable-slot")
+router.register("timetable-conflicts", TimetableConflictViewSet, basename="timetable-conflict")
 
 urlpatterns = router.urls

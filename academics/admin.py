@@ -13,6 +13,7 @@ from .models import (
     TeacherLeave,
     TeacherSubject,
     Timetable,
+    TimetableConflict,
     TimetableSlot,
 )
 
@@ -282,5 +283,34 @@ class TimetableSlotAdmin(admin.ModelAdmin):
         "division__name",
     )
     ordering = ("timetable", "day", "start_time")
+    readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TimetableConflict)
+class TimetableConflictAdmin(admin.ModelAdmin):
+    list_display = (
+        "timetable",
+        "conflict_type",
+        "severity",
+        "status",
+        "slot",
+        "conflicting_slot",
+        "resolved_by",
+        "resolved_at",
+        "created_at",
+    )
+    list_filter = (
+        "conflict_type",
+        "severity",
+        "status",
+        "timetable__semester__program",
+    )
+    search_fields = (
+        "description",
+        "timetable__semester__program__name",
+        "slot__subject__name",
+        "slot__teacher__employee_code",
+    )
+    ordering = ("-severity", "-created_at")
     readonly_fields = ("id", "created_at", "updated_at")
 
