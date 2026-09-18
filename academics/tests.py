@@ -1537,3 +1537,357 @@ class TimetableConflictDetectionAPITests(APITestCase):
         self.assertEqual(thurs_conflicts_after[0].id, thurs_conflict.id)
 
 
+class TimetableCPSATSolverTests(APITestCase):
+    """
+    Focused test suite for Phase 6: OR-Tools CP-SAT Timetable Constraint Solver.
+    """
+
+    def setUp(self):
+        self.teacher_id = "teach-001"
+        self.teacher_2_id = "teach-002"
+        self.subj_ds_id = "subj-ds"
+        self.subj_net_id = "subj-net"
+        self.div_1_id = "div-001"
+        self.div_2_id = "div-002"
+        self.batch_1_id = "batch-001"
+        self.room_cr1_id = "room-cr1"
+        self.room_cr2_id = "room-cr2"
+        self.room_lab1_id = "room-lab1"
+
+    def test_1_basic_feasible_schedule(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="11:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        input_data = {
+            "divisions": [{"id": self.div_1_id, "name": "Div-A", "batch_ids": []}],
+            "teachers": [
+                {
+                    "id": self.teacher_id,
+                    "name": "Prof. Alan",
+                    "employee_code": "EMP01",
+                    "qualified_subject_ids": [self.subj_ds_id],
+                }
+            ],
+            "rooms": [
+                {"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"}
+            ],
+            "sessions_to_schedule": [
+                {
+                    "id": "sess-1",
+                    "subject_id": self.subj_ds_id,
+                    "division_id": self.div_1_id,
+                    "session_type": "LECTURE",
+                }
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_FEASIBLE)
+        self.assertEqual(len(result["assignments"]), 1)
+        assignment = result["assignments"][0]
+        self.assertEqual(assignment["session_id"], "sess-1")
+        self.assertEqual(assignment["teacher_id"], self.teacher_id)
+        self.assertEqual(assignment["classroom_id"], self.room_cr1_id)
+        self.assertIsNone(assignment["laboratory_id"])
+        self.assertEqual(assignment["day"], "MONDAY")
+
+    def test_2_teacher_overlap_prevention(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # Only 1 time slot available
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="10:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        # 2 sessions assigned to the same teacher in 1 time slot -> Infeasible
+        input_data = {
+            "divisions": [
+                {"id": self.div_1_id, "name": "Div-A"},
+                {"id": self.div_2_id, "name": "Div-B"},
+            ],
+            "teachers": [
+                {
+                    "id": self.teacher_id,
+                    "name": "Prof. Alan",
+                    "employee_code": "EMP01",
+                    "qualified_subject_ids": [self.subj_ds_id, self.subj_net_id],
+                }
+            ],
+            "rooms": [
+                {"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"},
+                {"id": self.room_cr2_id, "name": "R102", "room_type": "CLASSROOM", "status": "AVAILABLE"},
+            ],
+            "sessions_to_schedule": [
+                {"id": "sess-1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "session_type": "LECTURE"},
+                {"id": "sess-2", "subject_id": self.subj_net_id, "division_id": self.div_2_id, "session_type": "LECTURE"},
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+    def test_3_division_overlap_prevention(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # Only 1 time slot available
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="10:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        # 2 sessions for the SAME division with different teachers in 1 time slot -> Infeasible
+        input_data = {
+            "divisions": [{"id": self.div_1_id, "name": "Div-A"}],
+            "teachers": [
+                {"id": self.teacher_id, "name": "Prof. Alan", "employee_code": "EMP01", "qualified_subject_ids": [self.subj_ds_id]},
+                {"id": self.teacher_2_id, "name": "Prof. Bob", "employee_code": "EMP02", "qualified_subject_ids": [self.subj_net_id]},
+            ],
+            "rooms": [
+                {"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"},
+                {"id": self.room_cr2_id, "name": "R102", "room_type": "CLASSROOM", "status": "AVAILABLE"},
+            ],
+            "sessions_to_schedule": [
+                {"id": "sess-1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "session_type": "LECTURE"},
+                {"id": "sess-2", "subject_id": self.subj_net_id, "division_id": self.div_1_id, "session_type": "LECTURE"},
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+    def test_4_classroom_overlap_prevention(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # 1 slot, 1 classroom, 2 different teachers and 2 different divisions -> Infeasible
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="10:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        input_data = {
+            "divisions": [
+                {"id": self.div_1_id, "name": "Div-A"},
+                {"id": self.div_2_id, "name": "Div-B"},
+            ],
+            "teachers": [
+                {"id": self.teacher_id, "name": "Prof. Alan", "employee_code": "EMP01", "qualified_subject_ids": [self.subj_ds_id]},
+                {"id": self.teacher_2_id, "name": "Prof. Bob", "employee_code": "EMP02", "qualified_subject_ids": [self.subj_net_id]},
+            ],
+            "rooms": [
+                {"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"}
+            ],
+            "sessions_to_schedule": [
+                {"id": "sess-1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "session_type": "LECTURE"},
+                {"id": "sess-2", "subject_id": self.subj_net_id, "division_id": self.div_2_id, "session_type": "LECTURE"},
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+    def test_5_laboratory_overlap_prevention(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # 1 slot, 1 lab, 2 practical sessions -> Infeasible
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="10:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        input_data = {
+            "divisions": [
+                {"id": self.div_1_id, "name": "Div-A", "batch_ids": [self.batch_1_id]},
+                {"id": self.div_2_id, "name": "Div-B", "batch_ids": ["batch-002"]},
+            ],
+            "teachers": [
+                {"id": self.teacher_id, "name": "Prof. Alan", "employee_code": "EMP01", "qualified_subject_ids": [self.subj_ds_id]},
+                {"id": self.teacher_2_id, "name": "Prof. Bob", "employee_code": "EMP02", "qualified_subject_ids": [self.subj_net_id]},
+            ],
+            "rooms": [
+                {"id": self.room_lab1_id, "name": "L1", "room_type": "LABORATORY", "status": "AVAILABLE"}
+            ],
+            "sessions_to_schedule": [
+                {"id": "sess-p1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "batch_id": self.batch_1_id, "session_type": "PRACTICAL"},
+                {"id": "sess-p2", "subject_id": self.subj_net_id, "division_id": self.div_2_id, "batch_id": "batch-002", "session_type": "PRACTICAL"},
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+    def test_6_teacher_availability(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # 2 slots: 09:00-10:00 and 10:00-11:00. Teacher unavailable at 09:00-10:00.
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="11:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        input_data = {
+            "divisions": [{"id": self.div_1_id, "name": "Div-A"}],
+            "teachers": [
+                {
+                    "id": self.teacher_id,
+                    "name": "Prof. Alan",
+                    "employee_code": "EMP01",
+                    "qualified_subject_ids": [self.subj_ds_id],
+                    "unavailable_slots": [
+                        {"day": "MONDAY", "start_time": "09:00:00", "end_time": "10:00:00"}
+                    ],
+                }
+            ],
+            "rooms": [{"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "sess-1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "session_type": "LECTURE"}
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_FEASIBLE)
+        self.assertEqual(result["assignments"][0]["start_time"], "10:00:00")
+
+    def test_7_teacher_leave(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # MONDAY and TUESDAY slots. Teacher is on approved leave on MONDAY.
+        config = SolverConfig(
+            days=["MONDAY", "TUESDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="10:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        input_data = {
+            "divisions": [{"id": self.div_1_id, "name": "Div-A"}],
+            "teachers": [
+                {
+                    "id": self.teacher_id,
+                    "name": "Prof. Alan",
+                    "employee_code": "EMP01",
+                    "qualified_subject_ids": [self.subj_ds_id],
+                    "leave_days": ["MONDAY"],
+                }
+            ],
+            "rooms": [{"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "sess-1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "session_type": "LECTURE"}
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_FEASIBLE)
+        self.assertEqual(result["assignments"][0]["day"], "TUESDAY")
+
+    def test_8_invalid_teacher_subject_assignment(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        config = SolverConfig(days=["MONDAY"])
+        solver = TimetableSolver(config=config)
+
+        # Teacher is qualified ONLY for subj_net_id, but session requires subj_ds_id
+        input_data = {
+            "divisions": [{"id": self.div_1_id, "name": "Div-A"}],
+            "teachers": [
+                {
+                    "id": self.teacher_id,
+                    "name": "Prof. Alan",
+                    "employee_code": "EMP01",
+                    "qualified_subject_ids": [self.subj_net_id],
+                }
+            ],
+            "rooms": [{"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "sess-1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "session_type": "LECTURE"}
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+        self.assertTrue(len(result["errors"]) > 0)
+
+    def test_9_practical_session_without_lab(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        config = SolverConfig(days=["MONDAY"])
+        solver = TimetableSolver(config=config)
+
+        # Practical session requires LABORATORY, but only CLASSROOM is provided
+        input_data = {
+            "divisions": [{"id": self.div_1_id, "name": "Div-A", "batch_ids": [self.batch_1_id]}],
+            "teachers": [
+                {
+                    "id": self.teacher_id,
+                    "name": "Prof. Alan",
+                    "employee_code": "EMP01",
+                    "qualified_subject_ids": [self.subj_ds_id],
+                }
+            ],
+            "rooms": [{"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "sess-p1", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "batch_id": self.batch_1_id, "session_type": "PRACTICAL"}
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+        self.assertTrue(len(result["errors"]) > 0)
+
+    def test_10_infeasible_scheduling_scenario(self):
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # 2 total slots available, but 4 sessions need to be scheduled by 1 teacher
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="11:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+
+        input_data = {
+            "divisions": [{"id": self.div_1_id, "name": "Div-A"}],
+            "teachers": [
+                {
+                    "id": self.teacher_id,
+                    "name": "Prof. Alan",
+                    "employee_code": "EMP01",
+                    "qualified_subject_ids": [self.subj_ds_id],
+                }
+            ],
+            "rooms": [{"id": self.room_cr1_id, "name": "R101", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": f"sess-{i}", "subject_id": self.subj_ds_id, "division_id": self.div_1_id, "session_type": "LECTURE"}
+                for i in range(1, 5)
+            ],
+        }
+
+        result = solver.solve(input_data)
+        self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+
+
