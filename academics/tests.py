@@ -15,6 +15,8 @@ from academics.models import (
     Program,
     Semester,
     Subject,
+    Timetable,
+    TimetableSlot,
 )
 from academics.validators import (
     validate_academic_year,
@@ -1888,6 +1890,660 @@ class TimetableCPSATSolverTests(APITestCase):
 
         result = solver.solve(input_data)
         self.assertEqual(result["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+
+class TimetableGenerationAPITests(APITestCase):
+    """
+    Focused test suite for Phase 7: Timetable Generation Service & API Endpoint.
+    """
+
+    def setUp(self):
+        from accounts.models import TeacherProfile
+        from academics.models import (
+            Classroom,
+            Department,
+            Division,
+            Laboratory,
+            PracticalBatch,
+            Program,
+            Semester,
+            Subject,
+            TeacherSubject,
+            Timetable,
+            TimetableSlot,
+        )
+
+        self.staff_user = UserModel.objects.create_user(
+            username="gen_staff",
+            email="gen_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_user = UserModel.objects.create_user(
+            username="gen_teacher",
+            email="gen_teacher@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="gen_student",
+            email="gen_student@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        self.dept = Department.objects.create(name="Gen Dept", code="GEN_DEPT")
+        self.prog = Program.objects.create(department=self.dept, name="B.Tech Gen", code="BTECH_GEN")
+        self.semester = Semester.objects.create(program=self.prog, number=1, academic_year="2026-2027")
+        self.division = Division.objects.create(semester=self.semester, name="Div-G1", capacity=60)
+        self.batch = PracticalBatch.objects.create(division=self.division, name="B1", capacity=20)
+
+        self.subj_lec = Subject.objects.create(
+            program=self.prog,
+            name="Theory of Computation",
+            code="GEN_TOC",
+            type="LECTURE",
+            weekly_lectures=2,
+            weekly_practicals=0,
+        )
+        self.subj_prac = Subject.objects.create(
+            program=self.prog,
+            name="Operating Systems Lab",
+            code="GEN_OSL",
+            type="PRACTICAL",
+            weekly_lectures=0,
+            weekly_practicals=1,
+        )
+
+        self.teacher_profile = TeacherProfile.objects.create(
+            user=self.teacher_user,
+            employee_code="EMP_GEN_01",
+            department=self.dept,
+            designation="Associate Professor",
+        )
+
+        TeacherSubject.objects.create(teacher=self.teacher_profile, subject=self.subj_lec, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_profile, subject=self.subj_prac, priority=1)
+
+        self.classroom = Classroom.objects.create(building="Academic Block", room_number="R201", capacity=60)
+        self.laboratory = Laboratory.objects.create(building="Tech Block", lab_number="L101", name="OS Lab", capacity=30)
+
+        self.generate_url = reverse("academics:timetable-generate")
+
+    def test_1_staff_can_request_generation(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        payload = {"semester": str(self.semester.id), "academic_year": "2026-2027"}
+        res = self.client.post(self.generate_url, payload, format="json")
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["status"], "FEASIBLE")
+        self.assertIn("timetable_id", res.data)
+        self.assertEqual(res.data["version"], 1)
+        self.assertEqual(res.data["total_slots"], 3)  # 2 lectures + 1 practical
+
+    def test_2_teacher_cannot_generate(self):
+        refresh = RefreshToken.for_user(self.teacher_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        payload = {"semester": str(self.semester.id), "academic_year": "2026-2027"}
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_3_student_cannot_generate(self):
+        refresh = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        payload = {"semester": str(self.semester.id), "academic_year": "2026-2027"}
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_4_unauthenticated_cannot_generate(self):
+        payload = {"semester": str(self.semester.id), "academic_year": "2026-2027"}
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_5_weekly_lecture_count_expands_correctly(self):
+        from academics.services.timetable_generator import TimetableGenerationService
+        from academics.models import TimetableSlot
+
+        # subj_lec has weekly_lectures=2
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "FEASIBLE")
+
+        slots = TimetableSlot.objects.filter(timetable_id=result["timetable_id"], subject=self.subj_lec)
+        self.assertEqual(slots.count(), 2)
+        for s in slots:
+            self.assertEqual(s.session_type, "LECTURE")
+            self.assertEqual(s.classroom_id, self.classroom.id)
+
+    def test_6_weekly_practical_count_expands_correctly(self):
+        from academics.services.timetable_generator import TimetableGenerationService
+        from academics.models import TimetableSlot
+
+        # subj_prac has weekly_practicals=1, division has 1 batch
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "FEASIBLE")
+
+        slots = TimetableSlot.objects.filter(timetable_id=result["timetable_id"], subject=self.subj_prac)
+        self.assertEqual(slots.count(), 1)
+        slot = slots.first()
+        self.assertEqual(slot.session_type, "PRACTICAL")
+        self.assertEqual(slot.laboratory_id, self.laboratory.id)
+        self.assertEqual(slot.batch_id, self.batch.id)
+
+    def test_7_qualified_teacher_subject_mapping_respected(self):
+        from accounts.models import TeacherProfile
+        from academics.models import Subject, TeacherSubject, TimetableSlot
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        teacher2_user = UserModel.objects.create_user(
+            username="gen_teacher2",
+            email="gen_teacher2@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        teacher2 = TeacherProfile.objects.create(
+            user=teacher2_user,
+            employee_code="EMP_GEN_02",
+            department=self.dept,
+            designation="Lecturer",
+        )
+
+        subj_new = Subject.objects.create(
+            program=self.prog,
+            name="Computer Networks",
+            code="GEN_NET",
+            type="LECTURE",
+            weekly_lectures=1,
+        )
+        TeacherSubject.objects.create(teacher=teacher2, subject=subj_new)
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "FEASIBLE")
+
+        slot = TimetableSlot.objects.get(timetable_id=result["timetable_id"], subject=subj_new)
+        self.assertEqual(slot.teacher_id, teacher2.id)
+
+    def test_8_missing_qualified_teacher_returns_infeasible_error(self):
+        from academics.models import Subject
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        # Subject without any TeacherSubject mapping
+        Subject.objects.create(
+            program=self.prog,
+            name="Unassigned Subject",
+            code="GEN_UNASSIGNED",
+            type="LECTURE",
+            weekly_lectures=2,
+        )
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "INFEASIBLE")
+        self.assertTrue(len(result["errors"]) > 0)
+        self.assertIn("No qualified teacher assigned", result["errors"][0])
+
+    def test_9_feasible_generation_creates_timetable(self):
+        from academics.models import Timetable
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "FEASIBLE")
+
+        tt = Timetable.objects.get(id=result["timetable_id"])
+        self.assertEqual(tt.semester, self.semester)
+        self.assertEqual(tt.academic_year, "2026-2027")
+        self.assertEqual(tt.created_by, self.staff_user)
+
+    def test_10_feasible_generation_creates_correct_timetable_slots(self):
+        from academics.models import TimetableSlot
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "FEASIBLE")
+
+        slots = list(TimetableSlot.objects.filter(timetable_id=result["timetable_id"]))
+        self.assertEqual(len(slots), 3)
+        for s in slots:
+            self.assertIn(s.day, ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"])
+            self.assertTrue(s.start_time < s.end_time)
+            self.assertEqual(s.status, TimetableSlot.Status.SCHEDULED)
+
+    def test_11_generated_timetable_is_not_published_automatically(self):
+        from academics.models import Timetable
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "FEASIBLE")
+
+        tt = Timetable.objects.get(id=result["timetable_id"])
+        self.assertEqual(tt.status, Timetable.Status.GENERATED)
+        self.assertIsNone(tt.published_at)
+
+    def test_12_infeasible_generation_creates_no_timetable_or_slots(self):
+        from academics.models import Classroom, Laboratory, Timetable, TimetableSlot
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        # Disable all rooms
+        Classroom.objects.all().update(status=Classroom.Status.MAINTENANCE)
+        Laboratory.objects.all().update(status=Laboratory.Status.MAINTENANCE)
+
+        initial_tt_count = Timetable.objects.count()
+        initial_slot_count = TimetableSlot.objects.count()
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "INFEASIBLE")
+
+        self.assertEqual(Timetable.objects.count(), initial_tt_count)
+        self.assertEqual(TimetableSlot.objects.count(), initial_slot_count)
+
+    def test_13_existing_published_timetable_remains_unchanged(self):
+        from academics.models import Timetable
+        from academics.services.timetable_generator import TimetableGenerationService
+        from django.utils import timezone
+
+        # Create existing PUBLISHED version 1
+        published_v1 = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            published_at=timezone.now(),
+            created_by=self.staff_user,
+        )
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertEqual(result["version"], 2)
+
+        published_v1.refresh_from_db()
+        self.assertEqual(published_v1.status, Timetable.Status.PUBLISHED)
+        self.assertEqual(published_v1.version, 1)
+
+    def test_14_version_increments_correctly(self):
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        gen1 = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        ).generate()
+        self.assertEqual(gen1["version"], 1)
+
+        gen2 = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        ).generate()
+        self.assertEqual(gen2["version"], 2)
+
+    def test_15_conflict_detection_result_is_included(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        payload = {"semester": str(self.semester.id), "academic_year": "2026-2027"}
+        res = self.client.post(self.generate_url, payload, format="json")
+
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertIn("conflicts", res.data)
+        self.assertIsInstance(res.data["conflicts"], list)
+
+    def test_16_no_partial_timetable_remains_if_generation_fails(self):
+        from academics.models import Timetable, TimetableSlot
+        from academics.services.timetable_generator import TimetableGenerationService
+
+        initial_tt_count = Timetable.objects.count()
+        initial_slot_count = TimetableSlot.objects.count()
+
+        # Non-existent semester ID
+        generator = TimetableGenerationService(
+            semester_id=uuid.uuid4(),
+            academic_year="2026-2027",
+            created_by=self.staff_user,
+        )
+        result = generator.generate()
+        self.assertEqual(result["status"], "INFEASIBLE")
+
+        self.assertEqual(Timetable.objects.count(), initial_tt_count)
+        self.assertEqual(TimetableSlot.objects.count(), initial_slot_count)
+
+
+class TimetableNestedSlotsAPITests(APITestCase):
+    """
+    Focused API tests for GET /api/v1/timetables/{id}/slots/
+    """
+
+    def setUp(self):
+        from accounts.models import TeacherProfile
+        from academics.models import (
+            Classroom,
+            Department,
+            Division,
+            Program,
+            Semester,
+            Subject,
+            TeacherSubject,
+            Timetable,
+            TimetableSlot,
+        )
+
+        self.staff_user = UserModel.objects.create_user(
+            username="slot_staff",
+            email="slot_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_user = UserModel.objects.create_user(
+            username="slot_teacher",
+            email="slot_teacher@smarttime.ai",
+            password="Password123!",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="slot_student",
+            email="slot_student@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        self.dept = Department.objects.create(name="Slot Dept", code="SLOT_DEPT")
+        self.prog = Program.objects.create(department=self.dept, name="B.Tech Slot", code="BTECH_SLOT")
+        self.semester = Semester.objects.create(program=self.prog, number=1, academic_year="2026-2027")
+        self.division = Division.objects.create(semester=self.semester, name="Div-S1", capacity=60)
+        self.subj = Subject.objects.create(program=self.prog, name="Maths", code="SLOT_MATH", type="LECTURE")
+
+        self.teacher_profile = TeacherProfile.objects.create(
+            user=self.teacher_user,
+            employee_code="EMP_SLOT_01",
+            department=self.dept,
+            designation="Professor",
+        )
+        TeacherSubject.objects.create(teacher=self.teacher_profile, subject=self.subj)
+        self.classroom = Classroom.objects.create(building="Block A", room_number="101", capacity=60)
+
+        # Draft Timetable
+        self.draft_timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.DRAFT,
+            created_by=self.staff_user,
+        )
+        self.draft_slot = TimetableSlot.objects.create(
+            timetable=self.draft_timetable,
+            division=self.division,
+            subject=self.subj,
+            teacher=self.teacher_profile,
+            classroom=self.classroom,
+            day="MONDAY",
+            start_time="09:00:00",
+            end_time="10:00:00",
+            session_type="LECTURE",
+        )
+
+        # Published Timetable
+        self.pub_timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=2,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+        self.pub_slot = TimetableSlot.objects.create(
+            timetable=self.pub_timetable,
+            division=self.division,
+            subject=self.subj,
+            teacher=self.teacher_profile,
+            classroom=self.classroom,
+            day="TUESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+        )
+
+    def test_1_staff_can_get_timetable_slots(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        url = reverse("academics:timetable-slots", kwargs={"pk": self.draft_timetable.id})
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res.data), 1)
+        self.assertEqual(res.data[0]["id"], str(self.draft_slot.id))
+        self.assertEqual(res.data[0]["day"], "MONDAY")
+
+    def test_2_teacher_and_student_permission_behavior(self):
+        # Teacher accessing DRAFT timetable -> 404 (hidden for non-staff)
+        refresh_t = RefreshToken.for_user(self.teacher_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_t.access_token}")
+
+        draft_url = reverse("academics:timetable-slots", kwargs={"pk": self.draft_timetable.id})
+        res_t_draft = self.client.get(draft_url)
+        self.assertEqual(res_t_draft.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Teacher accessing PUBLISHED timetable -> 200 OK
+        pub_url = reverse("academics:timetable-slots", kwargs={"pk": self.pub_timetable.id})
+        res_t_pub = self.client.get(pub_url)
+        self.assertEqual(res_t_pub.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_t_pub.data), 1)
+        self.assertEqual(res_t_pub.data[0]["id"], str(self.pub_slot.id))
+
+        # Student accessing DRAFT timetable -> 404
+        refresh_s = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh_s.access_token}")
+        res_s_draft = self.client.get(draft_url)
+        self.assertEqual(res_s_draft.status_code, status.HTTP_404_NOT_FOUND)
+
+        # Student accessing PUBLISHED timetable -> 200 OK
+        res_s_pub = self.client.get(pub_url)
+        self.assertEqual(res_s_pub.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(res_s_pub.data), 1)
+
+    def test_3_invalid_timetable_id_returns_404(self):
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        url = reverse("academics:timetable-slots", kwargs={"pk": uuid.uuid4()})
+        res = self.client.get(url)
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class TimetablePublishingAPITests(APITestCase):
+    """
+    Focused API tests for timetable publishing lifecycle and archiving previous versions.
+    """
+
+    def setUp(self):
+        from academics.models import (
+            Department,
+            Program,
+            Semester,
+            Timetable,
+        )
+
+        self.staff_user = UserModel.objects.create_user(
+            username="pub_staff",
+            email="pub_staff@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        refresh = RefreshToken.for_user(self.staff_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        self.dept = Department.objects.create(name="Publish Dept", code="PUB_DEPT")
+        self.prog = Program.objects.create(department=self.dept, name="B.Tech Publish", code="BTECH_PUB")
+        self.semester = Semester.objects.create(program=self.prog, number=1, academic_year="2026-2027")
+
+        self.v1_timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+        self.v1_published_at = self.v1_timetable.published_at
+
+        self.v2_timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=2,
+            status=Timetable.Status.DRAFT,
+            created_by=self.staff_user,
+        )
+
+    def test_publishing_v2_archives_already_published_v1_and_v2_becomes_published(self):
+        url = reverse("academics:timetable-publish", kwargs={"pk": self.v2_timetable.id})
+        res = self.client.post(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.v1_timetable.refresh_from_db()
+        self.v2_timetable.refresh_from_db()
+
+        # v2 is now PUBLISHED
+        self.assertEqual(self.v2_timetable.status, Timetable.Status.PUBLISHED)
+        self.assertIsNotNone(self.v2_timetable.published_at)
+
+        # v1 is now ARCHIVED
+        self.assertEqual(self.v1_timetable.status, Timetable.Status.ARCHIVED)
+        # v1 published_at is preserved as historical data
+        self.assertEqual(self.v1_timetable.published_at, self.v1_published_at)
+
+        # Only one PUBLISHED timetable exists for this semester + academic_year
+        published_count = Timetable.objects.filter(
+            semester=self.semester,
+            academic_year="2026-2027",
+            status=Timetable.Status.PUBLISHED,
+        ).count()
+        self.assertEqual(published_count, 1)
+
+    def test_handles_multiple_existing_published_versions_cleanly(self):
+        # Create a v3 that is also PUBLISHED to simulate dirty existing data
+        v3_timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=3,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+        # We now have v1 and v3 PUBLISHED, v2 DRAFT
+        self.assertEqual(
+            Timetable.objects.filter(
+                semester=self.semester,
+                academic_year="2026-2027",
+                status=Timetable.Status.PUBLISHED,
+            ).count(),
+            2,
+        )
+
+        # Publish v2
+        url = reverse("academics:timetable-publish", kwargs={"pk": self.v2_timetable.id})
+        res = self.client.post(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.v1_timetable.refresh_from_db()
+        self.v2_timetable.refresh_from_db()
+        v3_timetable.refresh_from_db()
+
+        self.assertEqual(self.v1_timetable.status, Timetable.Status.ARCHIVED)
+        self.assertEqual(v3_timetable.status, Timetable.Status.ARCHIVED)
+        self.assertEqual(self.v2_timetable.status, Timetable.Status.PUBLISHED)
+
+        self.assertEqual(
+            Timetable.objects.filter(
+                semester=self.semester,
+                academic_year="2026-2027",
+                status=Timetable.Status.PUBLISHED,
+            ).count(),
+            1,
+        )
+
+    def test_publishing_already_published_timetable_is_safe_and_idempotent(self):
+        # v1 is already PUBLISHED
+        url = reverse("academics:timetable-publish", kwargs={"pk": self.v1_timetable.id})
+        res = self.client.post(url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.v1_timetable.refresh_from_db()
+        self.assertEqual(self.v1_timetable.status, Timetable.Status.PUBLISHED)
+        self.assertEqual(self.v1_timetable.published_at, self.v1_published_at)
+
+        self.v2_timetable.refresh_from_db()
+        self.assertEqual(self.v2_timetable.status, Timetable.Status.DRAFT)
+
+        self.assertEqual(
+            Timetable.objects.filter(
+                semester=self.semester,
+                academic_year="2026-2027",
+                status=Timetable.Status.PUBLISHED,
+            ).count(),
+            1,
+        )
+
+    def test_transaction_rollback_on_failure(self):
+        from unittest.mock import patch
+
+        url = reverse("academics:timetable-publish", kwargs={"pk": self.v2_timetable.id})
+
+        # Simulate unexpected error during save of timetable
+        with patch.object(Timetable, "save", side_effect=RuntimeError("Simulated DB error")):
+            with self.assertRaises(RuntimeError):
+                self.client.post(url)
+
+        self.v1_timetable.refresh_from_db()
+        self.v2_timetable.refresh_from_db()
+
+        # State remains unchanged due to rollback
+        self.assertEqual(self.v1_timetable.status, Timetable.Status.PUBLISHED)
+        self.assertEqual(self.v2_timetable.status, Timetable.Status.DRAFT)
+
+
+
 
 
 

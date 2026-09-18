@@ -1034,3 +1034,20 @@ class TimetableConflictSerializer(serializers.ModelSerializer):
         return None
 
 
+class TimetableGenerateRequestSerializer(serializers.Serializer):
+    """
+    Serializer for timetable automatic generation request.
+    """
+
+    semester = serializers.PrimaryKeyRelatedField(
+        queryset=Semester.objects.all(),
+        help_text="UUID of the Semester to generate timetable for",
+    )
+    academic_year = serializers.CharField(
+        max_length=9,
+        validators=[validate_academic_year],
+        help_text="Academic session in 'YYYY-YYYY' format (e.g., 2026-2027)",
+    )
+
+
+

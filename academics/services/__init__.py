@@ -1,4 +1,5 @@
 from .conflict_detection import ConflictDetectionService
+from .timetable_generator import TimetableGenerationService
 from .timetable_solver import (
     DivisionInfo,
     RoomInfo,
@@ -12,6 +13,7 @@ from .timetable_solver import (
 __all__ = [
     "ConflictDetectionService",
     "TimetableSolver",
+    "TimetableGenerationService",
     "SolverConfig",
     "SchedulingSession",
     "TeacherInfo",

@@ -1,4 +1,6 @@
+from django.db import transaction
 from django.db.models import Q
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
@@ -43,10 +45,12 @@ from .serializers import (
     TeacherLeaveSerializer,
     TeacherSubjectSerializer,
     TimetableConflictSerializer,
+    TimetableGenerateRequestSerializer,
     TimetableSerializer,
     TimetableSlotSerializer,
 )
 from .services.conflict_detection import ConflictDetectionService
+from .services.timetable_generator import TimetableGenerationService
 
 
 class DepartmentViewSet(viewsets.ModelViewSet):
@@ -511,11 +515,21 @@ class TimetableViewSet(viewsets.ModelViewSet):
     )
     def publish(self, request, pk=None):
         timetable = self.get_object()
-        from django.utils import timezone
 
-        timetable.status = Timetable.Status.PUBLISHED
-        timetable.published_at = timezone.now()
-        timetable.save()
+        with transaction.atomic():
+            # 1. Archive any previously PUBLISHED timetables for the same semester and academic year
+            Timetable.objects.filter(
+                semester=timetable.semester,
+                academic_year=timetable.academic_year,
+                status=Timetable.Status.PUBLISHED,
+            ).exclude(pk=timetable.pk).update(status=Timetable.Status.ARCHIVED)
+
+            # 2. Mark this timetable as PUBLISHED (preserve published_at if already set)
+            timetable.status = Timetable.Status.PUBLISHED
+            if not timetable.published_at:
+                timetable.published_at = timezone.now()
+            timetable.save(update_fields=["status", "published_at", "updated_at"])
+
         serializer = self.get_serializer(timetable)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -555,6 +569,29 @@ class TimetableViewSet(viewsets.ModelViewSet):
         )
 
     @action(
+        detail=False,
+        methods=["post"],
+        url_path="generate",
+        url_name="generate",
+        permission_classes=[IsAuthenticated, IsStaffRole],
+    )
+    def generate(self, request):
+        serializer = TimetableGenerateRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        semester_id = serializer.validated_data["semester"].id
+        academic_year = serializer.validated_data["academic_year"]
+
+        generator = TimetableGenerationService(
+            semester_id=semester_id,
+            academic_year=academic_year,
+            created_by=request.user,
+        )
+        result = generator.generate()
+        if result.get("status") == "FEASIBLE":
+            return Response(result, status=status.HTTP_201_CREATED)
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(
         detail=True,
         methods=["get"],
         url_path="conflicts",
@@ -567,6 +604,29 @@ class TimetableViewSet(viewsets.ModelViewSet):
             "slot", "conflicting_slot", "resolved_by"
         )
         serializer = TimetableConflictSerializer(conflicts, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="slots",
+        url_name="slots",
+        permission_classes=[IsAuthenticated, IsStaffOrReadOnlyPublishedTimetable],
+    )
+    def slots(self, request, pk=None):
+        timetable = self.get_object()
+        slots = TimetableSlot.objects.filter(timetable=timetable).select_related(
+            "timetable",
+            "timetable__semester",
+            "division",
+            "batch",
+            "subject",
+            "teacher",
+            "teacher__user",
+            "classroom",
+            "laboratory",
+        ).order_by("day", "start_time")
+        serializer = TimetableSlotSerializer(slots, many=True)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
