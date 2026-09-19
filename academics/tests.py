@@ -1591,7 +1591,7 @@ class TimetableCPSATSolverTests(APITestCase):
         }
 
         result = solver.solve(input_data)
-        self.assertEqual(result["status"], TimetableSolver.STATUS_FEASIBLE)
+        self.assertIn(result["status"], [TimetableSolver.STATUS_FEASIBLE, TimetableSolver.STATUS_OPTIMAL])
         self.assertEqual(len(result["assignments"]), 1)
         assignment = result["assignments"][0]
         self.assertEqual(assignment["session_id"], "sess-1")
@@ -1769,7 +1769,7 @@ class TimetableCPSATSolverTests(APITestCase):
         }
 
         result = solver.solve(input_data)
-        self.assertEqual(result["status"], TimetableSolver.STATUS_FEASIBLE)
+        self.assertIn(result["status"], [TimetableSolver.STATUS_FEASIBLE, TimetableSolver.STATUS_OPTIMAL])
         self.assertEqual(result["assignments"][0]["start_time"], "10:00:00")
 
     def test_7_teacher_leave(self):
@@ -1802,7 +1802,7 @@ class TimetableCPSATSolverTests(APITestCase):
         }
 
         result = solver.solve(input_data)
-        self.assertEqual(result["status"], TimetableSolver.STATUS_FEASIBLE)
+        self.assertIn(result["status"], [TimetableSolver.STATUS_FEASIBLE, TimetableSolver.STATUS_OPTIMAL])
         self.assertEqual(result["assignments"][0]["day"], "TUESDAY")
 
     def test_8_invalid_teacher_subject_assignment(self):
@@ -1978,7 +1978,7 @@ class TimetableGenerationAPITests(APITestCase):
         res = self.client.post(self.generate_url, payload, format="json")
 
         self.assertEqual(res.status_code, status.HTTP_201_CREATED)
-        self.assertEqual(res.data["status"], "FEASIBLE")
+        self.assertIn(res.data["status"], ["FEASIBLE", "OPTIMAL"])
         self.assertIn("timetable_id", res.data)
         self.assertEqual(res.data["version"], 1)
         self.assertEqual(res.data["total_slots"], 3)  # 2 lectures + 1 practical
@@ -2015,7 +2015,7 @@ class TimetableGenerationAPITests(APITestCase):
             created_by=self.staff_user,
         )
         result = generator.generate()
-        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertIn(result["status"], ["FEASIBLE", "OPTIMAL"])
 
         slots = TimetableSlot.objects.filter(timetable_id=result["timetable_id"], subject=self.subj_lec)
         self.assertEqual(slots.count(), 2)
@@ -2034,7 +2034,7 @@ class TimetableGenerationAPITests(APITestCase):
             created_by=self.staff_user,
         )
         result = generator.generate()
-        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertIn(result["status"], ["FEASIBLE", "OPTIMAL"])
 
         slots = TimetableSlot.objects.filter(timetable_id=result["timetable_id"], subject=self.subj_prac)
         self.assertEqual(slots.count(), 1)
@@ -2076,7 +2076,7 @@ class TimetableGenerationAPITests(APITestCase):
             created_by=self.staff_user,
         )
         result = generator.generate()
-        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertIn(result["status"], ["FEASIBLE", "OPTIMAL"])
 
         slot = TimetableSlot.objects.get(timetable_id=result["timetable_id"], subject=subj_new)
         self.assertEqual(slot.teacher_id, teacher2.id)
@@ -2114,7 +2114,7 @@ class TimetableGenerationAPITests(APITestCase):
             created_by=self.staff_user,
         )
         result = generator.generate()
-        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertIn(result["status"], ["FEASIBLE", "OPTIMAL"])
 
         tt = Timetable.objects.get(id=result["timetable_id"])
         self.assertEqual(tt.semester, self.semester)
@@ -2131,7 +2131,7 @@ class TimetableGenerationAPITests(APITestCase):
             created_by=self.staff_user,
         )
         result = generator.generate()
-        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertIn(result["status"], ["FEASIBLE", "OPTIMAL"])
 
         slots = list(TimetableSlot.objects.filter(timetable_id=result["timetable_id"]))
         self.assertEqual(len(slots), 3)
@@ -2150,7 +2150,7 @@ class TimetableGenerationAPITests(APITestCase):
             created_by=self.staff_user,
         )
         result = generator.generate()
-        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertIn(result["status"], ["FEASIBLE", "OPTIMAL"])
 
         tt = Timetable.objects.get(id=result["timetable_id"])
         self.assertEqual(tt.status, Timetable.Status.GENERATED)
@@ -2199,7 +2199,7 @@ class TimetableGenerationAPITests(APITestCase):
             created_by=self.staff_user,
         )
         result = generator.generate()
-        self.assertEqual(result["status"], "FEASIBLE")
+        self.assertIn(result["status"], ["FEASIBLE", "OPTIMAL"])
         self.assertEqual(result["version"], 2)
 
         published_v1.refresh_from_db()
@@ -2541,6 +2541,377 @@ class TimetablePublishingAPITests(APITestCase):
         # State remains unchanged due to rollback
         self.assertEqual(self.v1_timetable.status, Timetable.Status.PUBLISHED)
         self.assertEqual(self.v2_timetable.status, Timetable.Status.DRAFT)
+
+
+class TimetableOptimizationSolverTests(APITestCase):
+    """
+    Phase 8: Tests for OR-Tools CP-SAT Soft Constraints and Timetable Optimization.
+    """
+
+    def setUp(self):
+        self.teacher_1 = "t-11111111-1111-1111-1111-111111111111"
+        self.teacher_2 = "t-22222222-2222-2222-2222-222222222222"
+        self.room_cr1 = "r-cr111111-1111-1111-1111-111111111111"
+        self.room_cr2 = "r-cr222222-2222-2222-2222-222222222222"
+        self.div_1 = "d-11111111-1111-1111-1111-111111111111"
+        self.div_2 = "d-22222222-2222-2222-2222-222222222222"
+        self.subj_math = "s-math1111-1111-1111-1111-111111111111"
+        self.subj_phy = "s-phy22222-2222-2222-2222-222222222222"
+
+    def test_1_hard_constraints_enforced_under_optimization(self):
+        """Hard constraints (e.g. teacher overlap) are strictly enforced even with optimization enabled."""
+        from academics.services.timetable_solver import SolverConfig, TimetableSolver
+
+        # 1 slot available, 2 sessions with same teacher -> Infeasible
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="10:00:00",
+            slot_duration_minutes=60,
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}, {"id": self.div_2, "name": "Div-B"}],
+            "teachers": [
+                {
+                    "id": self.teacher_1,
+                    "name": "Prof. T1",
+                    "employee_code": "T01",
+                    "qualified_subject_ids": [self.subj_math],
+                }
+            ],
+            "rooms": [
+                {"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"},
+                {"id": self.room_cr2, "name": "CR2", "room_type": "CLASSROOM", "status": "AVAILABLE"},
+            ],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "s2", "subject_id": self.subj_math, "division_id": self.div_2, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+    def test_2_subject_distribution_soft_constraint(self):
+        """Repeated sessions of the same subject are spread across different days when possible."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        # 2 days (MONDAY, TUESDAY), 2 slots each day (9-10, 10-11).
+        # 2 sessions of Maths for Div-A.
+        # Subject distribution should place them on 2 different days (cost = 0).
+        config = SolverConfig(
+            days=["MONDAY", "TUESDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="11:00:00",
+            slot_duration_minutes=60,
+            optimization=OptimizationConfig(
+                enabled=True,
+                subject_distribution_weight=50,
+                consecutive_subject_weight=0,
+                teacher_consecutive_weight=0,
+                division_gap_weight=0,
+                daily_load_balance_weight=0,
+            ),
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [
+                {"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math]}
+            ],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "m1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "m2", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_OPTIMAL)
+        self.assertEqual(res["objective_value"], 0)
+        days = {a["day"] for a in res["assignments"]}
+        self.assertEqual(len(days), 2)
+
+    def test_3_consecutive_same_subject_penalty(self):
+        """Consecutive sessions of the same subject receive a penalty."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        # 1 day (MONDAY), 3 slots (09-10, 10-11, 11-12).
+        # Maths session 1, Maths session 2, Physics session 1 for Div-A.
+        # Avoid consecutive Maths if interleaved with Physics: [Maths, Physics, Maths].
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="12:00:00",
+            slot_duration_minutes=60,
+            optimization=OptimizationConfig(
+                enabled=True,
+                subject_distribution_weight=0,
+                consecutive_subject_weight=50,
+                teacher_consecutive_weight=0,
+                division_gap_weight=0,
+                daily_load_balance_weight=0,
+            ),
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [
+                {"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math, self.subj_phy]}
+            ],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "m1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "m2", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "p1", "subject_id": self.subj_phy, "division_id": self.div_1, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_OPTIMAL)
+        self.assertEqual(res["objective_value"], 0)
+        assignments_by_time = {a["start_time"]: a["subject_id"] for a in res["assignments"]}
+        self.assertEqual(assignments_by_time["10:00:00"], self.subj_phy)
+
+    def test_4_teacher_consecutive_classes_penalty(self):
+        """Teacher back-to-back classes receive a penalty, favoring separated slots when available."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        config = SolverConfig(
+            days=["MONDAY", "TUESDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="11:00:00",
+            slot_duration_minutes=60,
+            optimization=OptimizationConfig(
+                enabled=True,
+                subject_distribution_weight=0,
+                consecutive_subject_weight=0,
+                teacher_consecutive_weight=50,
+                division_gap_weight=0,
+                daily_load_balance_weight=0,
+            ),
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}, {"id": self.div_2, "name": "Div-B"}],
+            "teachers": [
+                {"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math]}
+            ],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "s2", "subject_id": self.subj_math, "division_id": self.div_2, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_OPTIMAL)
+        self.assertEqual(res["objective_value"], 0)
+
+    def test_5_division_gaps_penalty(self):
+        """Gaps between classes for a division receive a penalty, favoring contiguous schedules."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="12:00:00",
+            slot_duration_minutes=60,
+            optimization=OptimizationConfig(
+                enabled=True,
+                subject_distribution_weight=0,
+                consecutive_subject_weight=0,
+                teacher_consecutive_weight=0,
+                division_gap_weight=50,
+                daily_load_balance_weight=0,
+            ),
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [
+                {"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math, self.subj_phy]}
+            ],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "s2", "subject_id": self.subj_phy, "division_id": self.div_1, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_OPTIMAL)
+        self.assertEqual(res["objective_value"], 0)
+        times = sorted([a["start_time"] for a in res["assignments"]])
+        self.assertIn(times, [["09:00:00", "10:00:00"], ["10:00:00", "11:00:00"]])
+
+    def test_6_daily_load_imbalance_penalty(self):
+        """Uneven daily load across days receives a penalty, favoring evenly balanced schedules."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        config = SolverConfig(
+            days=["MONDAY", "TUESDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="11:00:00",
+            slot_duration_minutes=60,
+            optimization=OptimizationConfig(
+                enabled=True,
+                subject_distribution_weight=0,
+                consecutive_subject_weight=0,
+                teacher_consecutive_weight=0,
+                division_gap_weight=0,
+                daily_load_balance_weight=50,
+            ),
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [
+                {"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math, self.subj_phy]}
+            ],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "s2", "subject_id": self.subj_phy, "division_id": self.div_1, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_OPTIMAL)
+        self.assertEqual(res["objective_value"], 0)
+        days = [a["day"] for a in res["assignments"]]
+        self.assertIn("MONDAY", days)
+        self.assertIn("TUESDAY", days)
+
+    def test_7_optimization_does_not_make_infeasible_problem_feasible(self):
+        """Infeasible hard constraints remain INFEASIBLE when optimization is enabled."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        config = SolverConfig(
+            days=["MONDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="10:00:00",
+            slot_duration_minutes=60,
+            optimization=OptimizationConfig(enabled=True),
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [{"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math]}],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "s2", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+    def test_8_feasible_problem_returns_valid_solution_with_all_assignments(self):
+        """A feasible problem returns all requested assignments correctly."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        config = SolverConfig(
+            days=["MONDAY", "TUESDAY", "WEDNESDAY"],
+            daily_start_time="09:00:00",
+            daily_end_time="12:00:00",
+            slot_duration_minutes=60,
+            optimization=OptimizationConfig(enabled=True),
+        )
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [
+                {"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math, self.subj_phy]}
+            ],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"},
+                {"id": "s2", "subject_id": self.subj_phy, "division_id": self.div_1, "session_type": "LECTURE"},
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        self.assertEqual(len(res["assignments"]), 2)
+        self.assertIsNotNone(res.get("objective_value"))
+
+    def test_9_solver_status_reported_correctly(self):
+        """Solver status accurately distinguishes between OPTIMAL, INFEASIBLE, and UNKNOWN."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        solver = TimetableSolver()
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [{"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math]}],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"}
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertEqual(res["status"], TimetableSolver.STATUS_OPTIMAL)
+
+        input_infeasible = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [{"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": []}],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"}
+            ],
+        }
+        res_inf = solver.solve(input_infeasible)
+        self.assertEqual(res_inf["status"], TimetableSolver.STATUS_INFEASIBLE)
+
+    def test_10_optimization_can_be_disabled_without_breaking_generation(self):
+        """Optimization can be toggled off, reverting to pure constraint satisfaction mode."""
+        from academics.services.timetable_solver import (
+            OptimizationConfig,
+            SolverConfig,
+            TimetableSolver,
+        )
+
+        config = SolverConfig(optimization=OptimizationConfig(enabled=False))
+        solver = TimetableSolver(config=config)
+        input_data = {
+            "divisions": [{"id": self.div_1, "name": "Div-A"}],
+            "teachers": [{"id": self.teacher_1, "name": "Prof. T1", "employee_code": "T01", "qualified_subject_ids": [self.subj_math]}],
+            "rooms": [{"id": self.room_cr1, "name": "CR1", "room_type": "CLASSROOM", "status": "AVAILABLE"}],
+            "sessions_to_schedule": [
+                {"id": "s1", "subject_id": self.subj_math, "division_id": self.div_1, "session_type": "LECTURE"}
+            ],
+        }
+        res = solver.solve(input_data)
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        self.assertIsNone(res.get("objective_value"))
+        self.assertEqual(len(res["assignments"]), 1)
+
 
 
 

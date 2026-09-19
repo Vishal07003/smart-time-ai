@@ -65,8 +65,19 @@ class DivisionInfo:
 
 
 @dataclass
+class OptimizationConfig:
+    """Configuration weights and toggles for timetable soft constraints / optimization."""
+    enabled: bool = True
+    subject_distribution_weight: int = 10
+    consecutive_subject_weight: int = 20
+    teacher_consecutive_weight: int = 5
+    division_gap_weight: int = 15
+    daily_load_balance_weight: int = 10
+
+
+@dataclass
 class SolverConfig:
-    """Solver grid and execution configuration."""
+    """Solver grid, execution, and optimization configuration."""
     days: List[str] = field(
         default_factory=lambda: [
             "MONDAY",
@@ -83,13 +94,15 @@ class SolverConfig:
     time_limit_seconds: float = 30.0
     random_seed: int = 42
     deterministic: bool = True
+    optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
 
 
 class TimetableSolver:
     """
-    CP-SAT constraint solver engine for timetable generation and scheduling validation.
+    CP-SAT constraint solver engine for timetable generation, scheduling validation, and optimization.
     """
 
+    STATUS_OPTIMAL = "OPTIMAL"
     STATUS_FEASIBLE = "FEASIBLE"
     STATUS_INFEASIBLE = "INFEASIBLE"
     STATUS_UNKNOWN = "UNKNOWN"
@@ -373,6 +386,150 @@ class TimetableSolver:
                         model.Add(sum(full_div_vars) + sum(batch_vars) <= 1)
 
         # -------------------------------------------------------------
+        # Soft Constraints / Objective Formulation (Phase 8)
+        # -------------------------------------------------------------
+        # Organize timeslots by day in chronological order
+        slots_by_day: Dict[str, List[TimeSlot]] = {}
+        for slot in self.time_slots:
+            slots_by_day.setdefault(slot.day, []).append(slot)
+        for d in slots_by_day:
+            slots_by_day[d].sort(key=lambda sl: sl.start_time)
+
+        penalties: List[Any] = []
+        opt = self.config.optimization
+
+        if opt.enabled:
+            # 1. SUBJECT_DISTRIBUTION
+            # Penalize multiple sessions of the same subject on the same day for a division
+            if opt.subject_distribution_weight > 0:
+                div_subj_sessions: Dict[Tuple[str, str], List[SchedulingSession]] = {}
+                for s in sessions:
+                    div_subj_sessions.setdefault((s.division_id, s.subject_id), []).append(s)
+
+                for (d_id, subj_id), s_list in div_subj_sessions.items():
+                    if len(s_list) > 1:
+                        for day, day_slots in slots_by_day.items():
+                            day_slot_indices = {sl.slot_index for sl in day_slots}
+                            day_vars = []
+                            for s in s_list:
+                                for x_var, slot, _, _ in session_var_map[s.id]:
+                                    if slot.slot_index in day_slot_indices:
+                                        day_vars.append(x_var)
+
+                            if len(day_vars) > 1:
+                                excess = model.NewIntVar(0, len(day_vars), f"excess_subj_{d_id[:8]}_{subj_id[:8]}_{day}")
+                                model.Add(excess >= sum(day_vars) - 1)
+                                model.Add(excess >= 0)
+                                penalties.append(excess * opt.subject_distribution_weight)
+
+            # 2. CONSECUTIVE_SAME_SUBJECT
+            # Penalize consecutive sessions of the same subject for the same division/batch
+            if opt.consecutive_subject_weight > 0:
+                div_subj_sessions = {}
+                for s in sessions:
+                    div_subj_sessions.setdefault((s.division_id, s.subject_id), []).append(s)
+
+                for (d_id, subj_id), s_list in div_subj_sessions.items():
+                    if len(s_list) > 1:
+                        for day, day_slots in slots_by_day.items():
+                            for k in range(len(day_slots) - 1):
+                                slot_k = day_slots[k]
+                                slot_k1 = day_slots[k + 1]
+                                if slot_k.end_time == slot_k1.start_time:
+                                    vars_k = [x for s in s_list for x, sl, _, _ in session_var_map[s.id] if sl.slot_index == slot_k.slot_index]
+                                    vars_k1 = [x for s in s_list for x, sl, _, _ in session_var_map[s.id] if sl.slot_index == slot_k1.slot_index]
+                                    if vars_k and vars_k1:
+                                        is_consec = model.NewBoolVar(f"consec_subj_{d_id[:8]}_{subj_id[:8]}_{day}_{k}")
+                                        model.Add(sum(vars_k) + sum(vars_k1) <= 1 + is_consec)
+                                        penalties.append(is_consec * opt.consecutive_subject_weight)
+
+            # 3. TEACHER_CONSECUTIVE_CLASSES
+            # Penalize consecutive teaching blocks for the same teacher
+            if opt.teacher_consecutive_weight > 0:
+                for t_id in teachers_by_id:
+                    for day, day_slots in slots_by_day.items():
+                        for k in range(len(day_slots) - 1):
+                            slot_k = day_slots[k]
+                            slot_k1 = day_slots[k + 1]
+                            if slot_k.end_time == slot_k1.start_time:
+                                vars_k = teacher_slot_vars.get((t_id, slot_k.slot_index), [])
+                                vars_k1 = teacher_slot_vars.get((t_id, slot_k1.slot_index), [])
+                                if vars_k and vars_k1:
+                                    t_consec = model.NewBoolVar(f"t_consec_{t_id[:8]}_{day}_{k}")
+                                    model.Add(sum(vars_k) + sum(vars_k1) <= 1 + t_consec)
+                                    penalties.append(t_consec * opt.teacher_consecutive_weight)
+
+            # 4. DIVISION_GAPS
+            # Penalize idle gap slots between classes for the same division on a day
+            if opt.division_gap_weight > 0:
+                for d_id, div_info in divisions_by_id.items():
+                    for day, day_slots in slots_by_day.items():
+                        m = len(day_slots)
+                        if m >= 3:
+                            occ_vars: List[Any] = []
+                            for slot in day_slots:
+                                d_vars = division_slot_vars.get((d_id, slot.slot_index), [])
+                                b_vars = [bv for b_id in div_info.batch_ids for bv in batch_slot_vars.get((b_id, slot.slot_index), [])]
+                                all_slot_div_vars = d_vars + b_vars
+                                if not all_slot_div_vars:
+                                    occ_k = model.NewBoolVar(f"occ_zero_{d_id[:8]}_{day}_{slot.slot_index}")
+                                    model.Add(occ_k == 0)
+                                    occ_vars.append(occ_k)
+                                elif len(all_slot_div_vars) == 1:
+                                    occ_vars.append(all_slot_div_vars[0])
+                                else:
+                                    occ_k = model.NewBoolVar(f"occ_{d_id[:8]}_{day}_{slot.slot_index}")
+                                    model.Add(occ_k == sum(all_slot_div_vars))
+                                    occ_vars.append(occ_k)
+
+                            prefix_active: List[Any] = [None] * m
+                            prefix_active[0] = occ_vars[0]
+                            for k in range(1, m):
+                                p_var = model.NewBoolVar(f"pref_{d_id[:8]}_{day}_{k}")
+                                model.AddMaxEquality(p_var, [prefix_active[k - 1], occ_vars[k]])
+                                prefix_active[k] = p_var
+
+                            suffix_active: List[Any] = [None] * m
+                            suffix_active[m - 1] = occ_vars[m - 1]
+                            for k in range(m - 2, -1, -1):
+                                s_var = model.NewBoolVar(f"suff_{d_id[:8]}_{day}_{k}")
+                                model.AddMaxEquality(s_var, [suffix_active[k + 1], occ_vars[k]])
+                                suffix_active[k] = s_var
+
+                            for k in range(1, m - 1):
+                                is_gap = model.NewBoolVar(f"gap_{d_id[:8]}_{day}_{k}")
+                                model.AddBoolAnd([prefix_active[k - 1], suffix_active[k + 1], occ_vars[k].Not()]).OnlyEnforceIf(is_gap)
+                                model.AddBoolOr([prefix_active[k - 1].Not(), suffix_active[k + 1].Not(), occ_vars[k]]).OnlyEnforceIf(is_gap.Not())
+                                penalties.append(is_gap * opt.division_gap_weight)
+
+            # 5. DAILY_LOAD_BALANCE
+            # Penalize uneven number of sessions across days for the same division
+            if opt.daily_load_balance_weight > 0 and len(slots_by_day) > 1:
+                for d_id, div_info in divisions_by_id.items():
+                    day_loads: List[Any] = []
+                    max_possible = max(len(s_list) for s_list in slots_by_day.values())
+                    for day, day_slots in slots_by_day.items():
+                        day_div_vars = []
+                        for slot in day_slots:
+                            day_div_vars.extend(division_slot_vars.get((d_id, slot.slot_index), []))
+                            for b_id in div_info.batch_ids:
+                                day_div_vars.extend(batch_slot_vars.get((b_id, slot.slot_index), []))
+                        day_loads.append(sum(day_div_vars))
+
+                    max_load = model.NewIntVar(0, max_possible, f"max_load_{d_id[:8]}")
+                    min_load = model.NewIntVar(0, max_possible, f"min_load_{d_id[:8]}")
+                    for dl in day_loads:
+                        model.Add(max_load >= dl)
+                        model.Add(min_load <= dl)
+
+                    load_diff = model.NewIntVar(0, max_possible, f"load_diff_{d_id[:8]}")
+                    model.Add(load_diff == max_load - min_load)
+                    penalties.append(load_diff * opt.daily_load_balance_weight)
+
+        if penalties:
+            model.Minimize(sum(penalties))
+
+        # -------------------------------------------------------------
         # Solve Model
         # -------------------------------------------------------------
         solver = cp_model.CpSolver()
@@ -382,6 +539,15 @@ class TimetableSolver:
             solver.parameters.num_search_workers = 1
 
         solver_status = solver.Solve(model)
+
+        if solver_status == cp_model.OPTIMAL:
+            status_str = self.STATUS_OPTIMAL
+        elif solver_status == cp_model.FEASIBLE:
+            status_str = self.STATUS_FEASIBLE
+        elif solver_status == cp_model.INFEASIBLE:
+            status_str = self.STATUS_INFEASIBLE
+        else:
+            status_str = self.STATUS_UNKNOWN
 
         if solver_status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
             assignments = []
@@ -407,12 +573,15 @@ class TimetableSolver:
                         )
                         break
 
-            return {
-                "status": self.STATUS_FEASIBLE,
+            res: Dict[str, Any] = {
+                "status": status_str,
                 "assignments": assignments,
                 "conflicts": [],
                 "errors": [],
             }
+            if penalties and opt.enabled:
+                res["objective_value"] = solver.ObjectiveValue()
+            return res
         elif solver_status == cp_model.INFEASIBLE:
             return {
                 "status": self.STATUS_INFEASIBLE,
