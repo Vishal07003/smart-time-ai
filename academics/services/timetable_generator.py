@@ -256,7 +256,10 @@ class TimetableGenerationService:
         solver = TimetableSolver(config=self.config)
         solver_result = solver.solve(solver_input)
 
-        if solver_result.get("status") != TimetableSolver.STATUS_FEASIBLE:
+        if solver_result.get("status") not in (
+            TimetableSolver.STATUS_FEASIBLE,
+            TimetableSolver.STATUS_OPTIMAL,
+        ):
             return {
                 "status": solver_result.get("status", TimetableSolver.STATUS_INFEASIBLE),
                 "errors": solver_result.get("errors", ["Timetable generation is infeasible."]),
@@ -319,11 +322,14 @@ class TimetableGenerationService:
                 for c in detected_conflicts
             ]
 
-            return {
-                "status": TimetableSolver.STATUS_FEASIBLE,
+            res = {
+                "status": solver_result.get("status", TimetableSolver.STATUS_FEASIBLE),
                 "timetable_id": str(timetable.id),
                 "version": timetable.version,
                 "total_slots": len(slots_to_create),
                 "conflicts": serialized_conflicts,
                 "errors": [],
             }
+            if "objective_value" in solver_result:
+                res["objective_value"] = solver_result["objective_value"]
+            return res

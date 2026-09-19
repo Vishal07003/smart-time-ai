@@ -587,7 +587,7 @@ class TimetableViewSet(viewsets.ModelViewSet):
             created_by=request.user,
         )
         result = generator.generate()
-        if result.get("status") == "FEASIBLE":
+        if result.get("status") in ("FEASIBLE", "OPTIMAL"):
             return Response(result, status=status.HTTP_201_CREATED)
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
