@@ -9,6 +9,12 @@ from .constraint_parser import (
     StructuredConstraint,
     TimeRange,
 )
+from .constraint_validator import (
+    ConstraintValidatorService,
+    ValidationErrorCode,
+    ValidationErrorDetail,
+    ValidationResult,
+)
 from .timetable_generator import TimetableGenerationService
 from .timetable_solver import (
     DivisionInfo,
@@ -23,6 +29,7 @@ from .timetable_solver import (
 __all__ = [
     "ConflictDetectionService",
     "ConstraintParserService",
+    "ConstraintValidatorService",
     "StructuredConstraint",
     "ConstraintType",
     "ConstraintMode",
@@ -30,6 +37,9 @@ __all__ = [
     "SessionType",
     "ParseResult",
     "ParsingContext",
+    "ValidationResult",
+    "ValidationErrorDetail",
+    "ValidationErrorCode",
     "TimetableSolver",
     "TimetableGenerationService",
     "SolverConfig",
@@ -39,3 +49,4 @@ __all__ = [
     "DivisionInfo",
     "TimeSlot",
 ]
+
