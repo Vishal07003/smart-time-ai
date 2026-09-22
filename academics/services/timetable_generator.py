@@ -37,11 +37,13 @@ class TimetableGenerationService:
         academic_year: str,
         created_by: Any = None,
         config: Optional[SolverConfig] = None,
+        constraints: Optional[List[Any]] = None,
     ):
         self.semester_id = semester_id
         self.academic_year = str(academic_year).strip()
         self.created_by = created_by
         self.config = config or SolverConfig()
+        self.constraints = constraints or []
 
     def generate(self) -> Dict[str, Any]:
         """
@@ -251,6 +253,7 @@ class TimetableGenerationService:
             "teachers": teachers_data,
             "rooms": rooms_data,
             "sessions_to_schedule": sessions_to_schedule,
+            "constraints": self.constraints,
         }
 
         solver = TimetableSolver(config=self.config)

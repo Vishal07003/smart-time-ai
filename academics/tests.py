@@ -9,8 +9,10 @@ from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from academics.models import (
+    Classroom,
     Department,
     Division,
+    Laboratory,
     PracticalBatch,
     Program,
     Semester,
@@ -24,12 +26,22 @@ from academics.validators import (
     validate_non_empty_name,
     validate_positive_integer,
 )
+from academics.services.constraint_integration import (
+    ConstraintIntegrationService,
+    SolverConstraintMap,
+)
 from academics.services.constraint_parser import StructuredConstraint
 from academics.services.constraint_validator import (
     ConstraintValidatorService,
     ValidationErrorCode,
     ValidationErrorDetail,
     ValidationResult,
+)
+from academics.services.timetable_generator import TimetableGenerationService
+from academics.services.timetable_solver import (
+    OptimizationConfig,
+    SolverConfig,
+    TimetableSolver,
 )
 from accounts.models import TeacherProfile, User
 
@@ -3421,6 +3433,376 @@ class ConstraintValidatorServiceTests(APITestCase):
         res = self.validator.validate(raw)
         self.assertFalse(res.valid)
         self.assertTrue(any(e.code == "INACTIVE_TEACHER" and e.field == "teacher" for e in res.errors))
+
+
+class ConstraintIntegrationServiceTests(APITestCase):
+    """
+    Phase 9C: Integration tests for connecting natural-language constraints to OR-Tools solver.
+    """
+
+    def setUp(self):
+        self.integration_service = ConstraintIntegrationService()
+
+        # Create academic hierarchy
+        self.dept = Department.objects.create(name="Computer Engineering", code="CE_9C")
+        self.program = Program.objects.create(
+            department=self.dept,
+            name="B.Tech Computer Science",
+            code="BTCS_9C",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=4,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(semester=self.semester, name="A", capacity=60)
+        self.batch = PracticalBatch.objects.create(division=self.division, name="B1", capacity=20)
+
+        # Create subjects
+        self.subject_dsa = Subject.objects.create(
+            program=self.program,
+            name="Data Structures",
+            code="CS401_9C",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=3,
+        )
+        self.subject_dbms = Subject.objects.create(
+            program=self.program,
+            name="Database Systems",
+            code="CS402_9C",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=2,
+        )
+
+        # Create classrooms
+        self.classroom = Classroom.objects.create(
+            building="Main",
+            room_number="401",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+
+        # Create teachers
+        self.user_t1 = UserModel.objects.create_user(
+            username="teacher_t1_9c",
+            email="t1.9c@example.com",
+            first_name="Amit",
+            last_name="Patil",
+            role=UserModel.Role.TEACHER,
+        )
+        self.teacher_1 = TeacherProfile.objects.create(
+            user=self.user_t1,
+            employee_code="EMP_T1_9C",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        self.user_t2 = UserModel.objects.create_user(
+            username="teacher_t2_9c",
+            email="t2.9c@example.com",
+            first_name="Suresh",
+            last_name="Raina",
+            role=UserModel.Role.TEACHER,
+        )
+        self.teacher_2 = TeacherProfile.objects.create(
+            user=self.user_t2,
+            employee_code="EMP_T2_9C",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        # Base solver input
+        self.base_solver_input = {
+            "divisions": [
+                {
+                    "id": str(self.division.id),
+                    "name": self.division.name,
+                    "batch_ids": [str(self.batch.id)],
+                }
+            ],
+            "teachers": [
+                {
+                    "id": str(self.teacher_1.id),
+                    "name": "Amit Patil",
+                    "employee_code": "EMP_T1_9C",
+                    "qualified_subject_ids": [str(self.subject_dsa.id)],
+                    "unavailable_slots": [],
+                    "leave_days": [],
+                },
+                {
+                    "id": str(self.teacher_2.id),
+                    "name": "Suresh Raina",
+                    "employee_code": "EMP_T2_9C",
+                    "qualified_subject_ids": [str(self.subject_dbms.id)],
+                    "unavailable_slots": [],
+                    "leave_days": [],
+                },
+            ],
+            "rooms": [
+                {
+                    "id": str(self.classroom.id),
+                    "name": "Main-401",
+                    "room_type": "CLASSROOM",
+                    "capacity": 60,
+                    "status": "AVAILABLE",
+                }
+            ],
+            "sessions_to_schedule": [
+                {
+                    "id": f"s_dsa_{i}",
+                    "subject_id": str(self.subject_dsa.id),
+                    "division_id": str(self.division.id),
+                    "batch_id": None,
+                    "session_type": "LECTURE",
+                    "duration_slots": 1,
+                }
+                for i in range(1, 4)
+            ]
+            + [
+                {
+                    "id": f"s_dbms_{j}",
+                    "subject_id": str(self.subject_dbms.id),
+                    "division_id": str(self.division.id),
+                    "batch_id": None,
+                    "session_type": "LECTURE",
+                    "duration_slots": 1,
+                }
+                for j in range(1, 3)
+            ],
+        }
+
+    def test_1_teacher_time_avoid_blocks_matching_slots(self):
+        """1. Teacher time restriction with AVOID prevents teacher assignment in specified window."""
+        constraint = {
+            "constraint_type": "TEACHER_TIME_RESTRICTION",
+            "teacher_id": str(self.teacher_1.id),
+            "day": "MONDAY",
+            "start_time": "09:00",
+            "end_time": "12:00",
+            "mode": "AVOID",
+        }
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = [constraint]
+
+        solver = TimetableSolver()
+        res = solver.solve(solver_input)
+
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        for a in res["assignments"]:
+            if a["teacher_id"] == str(self.teacher_1.id) and a["day"] == "MONDAY":
+                # Must not overlap 09:00 to 12:00
+                self.assertFalse(
+                    a["start_time"] < "12:00:00" and a["end_time"] > "09:00:00",
+                    f"Teacher 1 assigned during banned time: {a}",
+                )
+
+    def test_2_teacher_day_avoid_blocks_entire_day(self):
+        """2. Teacher day restriction with AVOID prevents teacher assignment on that day."""
+        constraint = {
+            "constraint_type": "TEACHER_DAY_RESTRICTION",
+            "teacher_id": str(self.teacher_1.id),
+            "day": "MONDAY",
+            "mode": "AVOID",
+        }
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = [constraint]
+
+        solver = TimetableSolver()
+        res = solver.solve(solver_input)
+
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        for a in res["assignments"]:
+            if a["teacher_id"] == str(self.teacher_1.id):
+                self.assertNotEqual(a["day"], "MONDAY", f"Teacher 1 scheduled on banned day: {a}")
+
+    def test_3_subject_day_avoid_blocks_subject_on_that_day(self):
+        """3. Subject day restriction with AVOID prevents subject assignment on that day."""
+        constraint = {
+            "constraint_type": "SUBJECT_DAY_RESTRICTION",
+            "subject_id": str(self.subject_dsa.id),
+            "day": "TUESDAY",
+            "mode": "AVOID",
+        }
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = [constraint]
+
+        solver = TimetableSolver()
+        res = solver.solve(solver_input)
+
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        for a in res["assignments"]:
+            if a["subject_id"] == str(self.subject_dsa.id):
+                self.assertNotEqual(a["day"], "TUESDAY", f"DSA scheduled on banned Tuesday: {a}")
+
+    def test_4_division_time_avoid_blocks_matching_slots(self):
+        """4. Division time restriction with AVOID prevents division assignment in specified window."""
+        constraint = {
+            "constraint_type": "DIVISION_TIME_RESTRICTION",
+            "division_id": str(self.division.id),
+            "day": "WEDNESDAY",
+            "start_time": "14:00",
+            "end_time": "17:00",
+            "mode": "AVOID",
+        }
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = [constraint]
+
+        solver = TimetableSolver()
+        res = solver.solve(solver_input)
+
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        for a in res["assignments"]:
+            if a["division_id"] == str(self.division.id) and a["day"] == "WEDNESDAY":
+                self.assertFalse(
+                    a["start_time"] < "17:00:00" and a["end_time"] > "14:00:00",
+                    f"Division scheduled during banned afternoon: {a}",
+                )
+
+    def test_5_subject_time_prefer_affects_optimization_objective(self):
+        """5. Subject time PREFER creates penalty terms and guides optimization."""
+        # 1. Without prefer constraint
+        solver_base = TimetableSolver(config=SolverConfig(optimization=OptimizationConfig(enabled=True)))
+        res_base = solver_base.solve(dict(self.base_solver_input))
+        self.assertIn(res_base["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+
+        # 2. With prefer constraint on morning slots
+        constraint = {
+            "constraint_type": "SUBJECT_TIME_PREFERENCE",
+            "subject_id": str(self.subject_dsa.id),
+            "day": "MONDAY",
+            "start_time": "09:00",
+            "end_time": "12:00",
+            "mode": "PREFER",
+        }
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = [constraint]
+
+        solver_pref = TimetableSolver(config=SolverConfig(optimization=OptimizationConfig(enabled=True)))
+        res_pref = solver_pref.solve(solver_input)
+
+        self.assertIn(res_pref["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        self.assertIn("objective_value", res_pref)
+
+    def test_6_prefer_constraint_does_not_make_feasible_problem_infeasible(self):
+        """6. PREFER constraint does NOT make an otherwise feasible problem infeasible."""
+        # Force a preference that cannot fit all sessions (e.g. only 1 slot on 1 day for 3 DSA sessions)
+        constraint = {
+            "constraint_type": "SUBJECT_TIME_PREFERENCE",
+            "subject_id": str(self.subject_dsa.id),
+            "day": "MONDAY",
+            "start_time": "09:00",
+            "end_time": "10:00",  # Only 1 slot available, but DSA needs 3 lectures
+            "mode": "PREFER",
+        }
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = [constraint]
+
+        solver = TimetableSolver(config=SolverConfig(optimization=OptimizationConfig(enabled=True)))
+        res = solver.solve(solver_input)
+
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        self.assertEqual(len(res["assignments"]), 5)  # All 5 sessions successfully scheduled
+
+    def test_7_multiple_constraints_work_together(self):
+        """7. Multiple hard restrictions and soft preferences work together seamlessly."""
+        constraints = [
+            {
+                "constraint_type": "TEACHER_DAY_RESTRICTION",
+                "teacher_id": str(self.teacher_1.id),
+                "day": "MONDAY",
+                "mode": "AVOID",
+            },
+            {
+                "constraint_type": "SUBJECT_DAY_RESTRICTION",
+                "subject_id": str(self.subject_dbms.id),
+                "day": "TUESDAY",
+                "mode": "AVOID",
+            },
+            {
+                "constraint_type": "SUBJECT_TIME_PREFERENCE",
+                "subject_id": str(self.subject_dsa.id),
+                "day": "WEDNESDAY",
+                "start_time": "09:00",
+                "end_time": "12:00",
+                "mode": "PREFER",
+            },
+        ]
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = constraints
+
+        solver = TimetableSolver()
+        res = solver.solve(solver_input)
+
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        for a in res["assignments"]:
+            if a["teacher_id"] == str(self.teacher_1.id):
+                self.assertNotEqual(a["day"], "MONDAY")
+            if a["subject_id"] == str(self.subject_dbms.id):
+                self.assertNotEqual(a["day"], "TUESDAY")
+
+    def test_8_no_constraints_preserves_existing_phase8_behavior(self):
+        """8. Omitting constraints preserves existing Phase 8 solver behavior exactly."""
+        solver = TimetableSolver()
+        res = solver.solve(dict(self.base_solver_input))
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        self.assertEqual(len(res["assignments"]), 5)
+
+    def test_9_invalid_or_unvalidated_constraints_rejected_safely(self):
+        """9. Unvalidated/malformed constraints are safely rejected without raising exceptions."""
+        constraints = [
+            {"constraint_type": "INVALID_TYPE", "teacher": "Nobody"},
+            {"constraint_type": "TEACHER_DAY_RESTRICTION", "day": "INVALID_DAY"},
+        ]
+        solver_input = dict(self.base_solver_input)
+        solver_input["constraints"] = constraints
+
+        solver = TimetableSolver()
+        res = solver.solve(solver_input)
+        self.assertIn(res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        self.assertEqual(len(res["assignments"]), 5)
+
+    def test_10_existing_published_timetable_remains_unchanged(self):
+        """10. Existing PUBLISHED timetable remains unchanged when generating with constraints."""
+        from academics.models import TeacherSubject
+
+        # Assign teachers to subjects in DB for TimetableGenerationService
+        TeacherSubject.objects.create(teacher=self.teacher_1, subject=self.subject_dsa, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_2, subject=self.subject_dbms, priority=1)
+
+        # Create pre-existing PUBLISHED timetable v1
+        pub_tt = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+        )
+
+        constraints = [
+            {
+                "constraint_type": "TEACHER_DAY_RESTRICTION",
+                "teacher": "Amit Patil",
+                "day": "MONDAY",
+                "mode": "AVOID",
+            }
+        ]
+
+        generator = TimetableGenerationService(
+            semester_id=self.semester.id,
+            academic_year="2026-2027",
+            constraints=constraints,
+        )
+        gen_res = generator.generate()
+
+        self.assertIn(gen_res["status"], [TimetableSolver.STATUS_OPTIMAL, TimetableSolver.STATUS_FEASIBLE])
+        self.assertEqual(gen_res["version"], 2)
+
+        # Refresh pub_tt to verify it remained PUBLISHED and untouched
+        pub_tt.refresh_from_db()
+        self.assertEqual(pub_tt.status, Timetable.Status.PUBLISHED)
+        self.assertEqual(pub_tt.version, 1)
 
 
 
