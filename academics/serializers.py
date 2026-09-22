@@ -1050,4 +1050,46 @@ class TimetableGenerateRequestSerializer(serializers.Serializer):
     )
 
 
+class ConstraintParseAndValidateRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for parsing and validating natural-language timetable requirements.
+    """
+
+    text = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        help_text="Natural-language constraint instruction (e.g. 'Amit ko Monday morning class mat do')",
+    )
+    semester = serializers.PrimaryKeyRelatedField(
+        queryset=Semester.objects.select_related("program").all(),
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="Optional Semester UUID to scope entity matching and relationships",
+    )
+
+
+class ConstraintGenerateTimetableRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for natural-language constrained timetable generation.
+    """
+
+    text = serializers.CharField(
+        required=True,
+        allow_blank=False,
+        help_text="Natural-language constraint instruction",
+    )
+    semester = serializers.PrimaryKeyRelatedField(
+        queryset=Semester.objects.select_related("program").all(),
+        required=True,
+        help_text="UUID of the Semester to generate timetable for",
+    )
+    academic_year = serializers.CharField(
+        max_length=9,
+        validators=[validate_academic_year],
+        required=True,
+        help_text="Academic session in 'YYYY-YYYY' format (e.g., 2026-2027)",
+    )
+
+
 
