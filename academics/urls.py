@@ -1,7 +1,10 @@
+from django.urls import path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
     ClassroomViewSet,
+    ConstraintGenerateTimetableView,
+    ConstraintParseAndValidateView,
     DepartmentViewSet,
     DivisionViewSet,
     LaboratoryViewSet,
@@ -36,4 +39,16 @@ router.register("timetables", TimetableViewSet, basename="timetable")
 router.register("timetable-slots", TimetableSlotViewSet, basename="timetable-slot")
 router.register("timetable-conflicts", TimetableConflictViewSet, basename="timetable-conflict")
 
-urlpatterns = router.urls
+urlpatterns = [
+    path(
+        "constraints/parse-and-validate/",
+        ConstraintParseAndValidateView.as_view(),
+        name="constraint-parse-and-validate",
+    ),
+    path(
+        "constraints/generate-timetable/",
+        ConstraintGenerateTimetableView.as_view(),
+        name="constraint-generate-timetable",
+    ),
+] + router.urls
+

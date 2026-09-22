@@ -7,8 +7,9 @@ from rest_framework.exceptions import ValidationError
 from rest_framework.filters import OrderingFilter, SearchFilter
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
-from accounts.models import User
+from accounts.models import TeacherProfile, User
 from accounts.permissions import IsStaffRole
 from .models import (
     Classroom,
@@ -34,6 +35,8 @@ from .permissions import (
 )
 from .serializers import (
     ClassroomSerializer,
+    ConstraintGenerateTimetableRequestSerializer,
+    ConstraintParseAndValidateRequestSerializer,
     DepartmentSerializer,
     DivisionSerializer,
     LaboratorySerializer,
@@ -50,6 +53,8 @@ from .serializers import (
     TimetableSlotSerializer,
 )
 from .services.conflict_detection import ConflictDetectionService
+from .services.constraint_parser import ConstraintParserService, ParsingContext
+from .services.constraint_validator import ConstraintValidatorService
 from .services.timetable_generator import TimetableGenerationService
 
 
@@ -783,4 +788,185 @@ class TimetableConflictViewSet(viewsets.ReadOnlyModelViewSet):
         conflict.save()
         serializer = self.get_serializer(conflict)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+def build_parsing_context_from_db(semester=None) -> ParsingContext:
+    """Constructs a ParsingContext from active database records to assist entity resolution."""
+    teachers_qs = TeacherProfile.objects.filter(
+        status=TeacherProfile.Status.ACTIVE,
+        user__is_active=True,
+    ).select_related("user")
+    teachers_data = [
+        {
+            "id": str(t.id),
+            "name": t.user.get_full_name() or t.user.username,
+            "employee_code": t.employee_code,
+        }
+        for t in teachers_qs
+    ]
+
+    if semester:
+        subjects_qs = Subject.objects.filter(program=semester.program)
+        divisions_qs = Division.objects.filter(semester=semester)
+    else:
+        subjects_qs = Subject.objects.all()
+        divisions_qs = Division.objects.all()
+
+    subjects_data = [
+        {
+            "id": str(s.id),
+            "name": s.name,
+            "code": s.code,
+        }
+        for s in subjects_qs
+    ]
+
+    divisions_data = [
+        {
+            "id": str(d.id),
+            "name": d.name,
+        }
+        for d in divisions_qs
+    ]
+
+    return ParsingContext(
+        teachers=teachers_data,
+        subjects=subjects_data,
+        divisions=divisions_data,
+    )
+
+
+class ConstraintParseAndValidateView(APIView):
+    """
+    POST /api/v1/constraints/parse-and-validate/
+    Staff-only endpoint to parse natural-language timetable requirements into
+    structured constraints and validate/normalize them against actual database entities.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def post(self, request, *args, **kwargs):
+        serializer = ConstraintParseAndValidateRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        text = serializer.validated_data["text"]
+        semester = serializer.validated_data.get("semester")
+
+        # 1. Build context & parse
+        context = build_parsing_context_from_db(semester=semester)
+        parser = ConstraintParserService()
+        parse_res = parser.parse(text, context=context)
+
+        if not parse_res.success or not parse_res.constraint:
+            formatted_errors = []
+            for err in parse_res.errors:
+                if "ambiguous" in err.lower():
+                    code = "AMBIGUOUS"
+                    field_name = "teacher" if "teacher" in err.lower() else ("subject" if "subject" in err.lower() else "division")
+                elif "unknown" in err.lower() or "not found" in err.lower():
+                    code = "NOT_FOUND"
+                    field_name = "teacher" if "teacher" in err.lower() else ("subject" if "subject" in err.lower() else "division")
+                else:
+                    code = "PARSER_ERROR"
+                    field_name = "text"
+                formatted_errors.append({
+                    "code": code,
+                    "field": field_name,
+                    "message": err,
+                })
+            return Response(
+                {
+                    "valid": False,
+                    "constraint": None,
+                    "errors": formatted_errors,
+                },
+                status=status.HTTP_200_OK,
+            )
+
+        # 2. Validate & normalize against DB
+        validator = ConstraintValidatorService()
+        val_res = validator.validate(parse_res.constraint, semester=semester)
+
+        return Response(val_res.to_dict(), status=status.HTTP_200_OK)
+
+
+class ConstraintGenerateTimetableView(APIView):
+    """
+    POST /api/v1/constraints/generate-timetable/
+    Staff-only endpoint to parse natural-language constraints, validate them,
+    and generate an OR-Tools optimized timetable.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def post(self, request, *args, **kwargs):
+        serializer = ConstraintGenerateTimetableRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        text = serializer.validated_data["text"]
+        semester = serializer.validated_data["semester"]
+        academic_year = serializer.validated_data["academic_year"]
+
+        # 1. Parse natural language
+        context = build_parsing_context_from_db(semester=semester)
+        parser = ConstraintParserService()
+        parse_res = parser.parse(text, context=context)
+
+        if not parse_res.success or not parse_res.constraint:
+            formatted_errors = []
+            for err in parse_res.errors:
+                if "ambiguous" in err.lower():
+                    code = "AMBIGUOUS"
+                    field_name = "teacher" if "teacher" in err.lower() else ("subject" if "subject" in err.lower() else "division")
+                elif "unknown" in err.lower() or "not found" in err.lower():
+                    code = "NOT_FOUND"
+                    field_name = "teacher" if "teacher" in err.lower() else ("subject" if "subject" in err.lower() else "division")
+                else:
+                    code = "PARSER_ERROR"
+                    field_name = "text"
+                formatted_errors.append({
+                    "code": code,
+                    "field": field_name,
+                    "message": err,
+                })
+            return Response(
+                {
+                    "status": "INFEASIBLE",
+                    "valid": False,
+                    "constraint": None,
+                    "errors": formatted_errors,
+                    "conflicts": [],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 2. Validate & normalize
+        validator = ConstraintValidatorService()
+        val_res = validator.validate(parse_res.constraint, semester=semester)
+
+        if not val_res.valid or not val_res.constraint:
+            return Response(
+                {
+                    "status": "INFEASIBLE",
+                    "valid": False,
+                    "constraint": None,
+                    "errors": [err.to_dict() for err in val_res.errors],
+                    "conflicts": [],
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 3. Generate Timetable with OR-Tools Solver
+        generator = TimetableGenerationService(
+            semester_id=semester.id,
+            academic_year=academic_year,
+            created_by=request.user,
+            constraints=[val_res.constraint],
+        )
+        result = generator.generate()
+
+        if result.get("status") in ("FEASIBLE", "OPTIMAL"):
+            return Response(result, status=status.HTTP_201_CREATED)
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
 

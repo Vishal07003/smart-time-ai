@@ -3805,6 +3805,298 @@ class ConstraintIntegrationServiceTests(APITestCase):
         self.assertEqual(pub_tt.version, 1)
 
 
+class NaturalLanguageConstraintAPITests(APITestCase):
+    """
+    Phase 9D: Staff-facing Natural Language Constraint API integration tests.
+    """
+
+    def setUp(self):
+        # 1. Create Users & Roles
+        self.staff_user = UserModel.objects.create_superuser(
+            username="staff_admin_9d",
+            email="staff.9d@example.com",
+            password="Password123!",
+            role=UserModel.Role.STAFF,
+        )
+        self.teacher_user = UserModel.objects.create_user(
+            username="teacher_user_9d",
+            email="teacher.9d@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=UserModel.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="student_user_9d",
+            email="student.9d@example.com",
+            password="Password123!",
+            role=UserModel.Role.STUDENT,
+        )
+
+        # 2. Create Academic Hierarchy
+        self.dept = Department.objects.create(name="Computer Engineering", code="CE_9D")
+        self.program = Program.objects.create(
+            department=self.dept,
+            name="B.Tech Computer Science",
+            code="BTCS_9D",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=6,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(semester=self.semester, name="A", capacity=60)
+        self.batch = PracticalBatch.objects.create(division=self.division, name="B1", capacity=20)
+
+        # 3. Create Resources & Profiles
+        self.classroom = Classroom.objects.create(
+            building="TechBlock",
+            room_number="101",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.teacher_profile = TeacherProfile.objects.create(
+            user=self.teacher_user,
+            employee_code="EMP_AMIT_9D",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        # 4. Create Subjects and Qualifications
+        from academics.models import TeacherSubject
+
+        self.subject_dsa = Subject.objects.create(
+            program=self.program,
+            name="Data Structures",
+            code="CS601_9D",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=3,
+        )
+        TeacherSubject.objects.create(
+            teacher=self.teacher_profile,
+            subject=self.subject_dsa,
+            priority=1,
+        )
+
+        self.parse_url = reverse("academics:constraint-parse-and-validate")
+        self.generate_url = reverse("academics:constraint-generate-timetable")
+
+    def test_1_staff_can_parse_and_validate_natural_language(self):
+        """1. Staff can parse and validate natural language requirement via API."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "text": "Amit Patil ko Monday morning class mat do",
+            "semester": str(self.semester.id),
+        }
+        res = self.client.post(self.parse_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data["valid"])
+        self.assertIsNotNone(res.data["constraint"])
+        self.assertEqual(res.data["constraint"]["constraint_type"], "TEACHER_TIME_RESTRICTION")
+        self.assertEqual(res.data["constraint"]["teacher_id"], str(self.teacher_profile.id))
+        self.assertEqual(res.data["constraint"]["day"], "MONDAY")
+        self.assertEqual(res.data["constraint"]["start_time"], "09:00")
+        self.assertEqual(res.data["constraint"]["end_time"], "12:00")
+        self.assertEqual(res.data["constraint"]["mode"], "AVOID")
+
+    def test_2_teacher_cannot_access(self):
+        """2. Teacher role is forbidden from constraint endpoints."""
+        self.client.force_authenticate(user=self.teacher_user)
+        payload = {"text": "Test instruction", "semester": str(self.semester.id)}
+        res_parse = self.client.post(self.parse_url, payload, format="json")
+        self.assertEqual(res_parse.status_code, status.HTTP_403_FORBIDDEN)
+
+        res_gen = self.client.post(
+            self.generate_url,
+            {**payload, "academic_year": "2026-2027"},
+            format="json",
+        )
+        self.assertEqual(res_gen.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_3_student_cannot_access(self):
+        """3. Student role is forbidden from constraint endpoints."""
+        self.client.force_authenticate(user=self.student_user)
+        payload = {"text": "Test instruction", "semester": str(self.semester.id)}
+        res_parse = self.client.post(self.parse_url, payload, format="json")
+        self.assertEqual(res_parse.status_code, status.HTTP_403_FORBIDDEN)
+
+        res_gen = self.client.post(
+            self.generate_url,
+            {**payload, "academic_year": "2026-2027"},
+            format="json",
+        )
+        self.assertEqual(res_gen.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_4_unauthenticated_request_rejected(self):
+        """4. Unauthenticated requests are rejected with 401 Unauthorized."""
+        payload = {"text": "Test instruction", "semester": str(self.semester.id)}
+        res_parse = self.client.post(self.parse_url, payload, format="json")
+        self.assertEqual(res_parse.status_code, status.HTTP_401_UNAUTHORIZED)
+
+        res_gen = self.client.post(
+            self.generate_url,
+            {**payload, "academic_year": "2026-2027"},
+            format="json",
+        )
+        self.assertEqual(res_gen.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_5_valid_natural_language_produces_canonical_constraint(self):
+        """5. Valid PREFER natural language produces typed canonical constraint dict."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "text": "Data Structures Friday afternoon prefer karo",
+            "semester": str(self.semester.id),
+        }
+        res = self.client.post(self.parse_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data["valid"])
+        self.assertEqual(res.data["constraint"]["constraint_type"], "SUBJECT_TIME_PREFERENCE")
+        self.assertEqual(res.data["constraint"]["subject_id"], str(self.subject_dsa.id))
+        self.assertEqual(res.data["constraint"]["day"], "FRIDAY")
+        self.assertEqual(res.data["constraint"]["mode"], "PREFER")
+
+    def test_6_ambiguous_teacher_or_entity_returns_validation_error(self):
+        """6. Ambiguous entity match returns structured validation error."""
+        # Create a second teacher named Amit
+        user_amit2 = UserModel.objects.create_user(
+            username="teacher_amit_sharma_9d",
+            email="amit.sharma.9d@example.com",
+            first_name="Amit",
+            last_name="Sharma",
+            role=UserModel.Role.TEACHER,
+        )
+        TeacherProfile.objects.create(
+            user=user_amit2,
+            employee_code="EMP_AMITS_9D",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "text": "Amit ko Monday morning class mat do",
+            "semester": str(self.semester.id),
+        }
+        res = self.client.post(self.parse_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertFalse(res.data["valid"])
+        self.assertIsNone(res.data["constraint"])
+        self.assertTrue(any(e["code"] == "AMBIGUOUS" for e in res.data["errors"]))
+
+    def test_7_invalid_constraint_does_not_invoke_solver(self):
+        """7. Invalid constraint returns 400 and does NOT invoke solver or create timetable."""
+        self.client.force_authenticate(user=self.staff_user)
+        initial_timetable_count = Timetable.objects.count()
+
+        payload = {
+            "text": "UnknownProfessor ko Monday mat do",
+            "semester": str(self.semester.id),
+            "academic_year": "2026-2027",
+        }
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(Timetable.objects.count(), initial_timetable_count)
+
+    def test_8_valid_avoid_constraint_reaches_timetable_generation(self):
+        """8. Valid AVOID constraint is enforced in the generated timetable."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "text": "Amit Patil ko Monday avoid karo",
+            "semester": str(self.semester.id),
+            "academic_year": "2026-2027",
+        }
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertIn(res.data["status"], ["FEASIBLE", "OPTIMAL"])
+
+        # Check created slots: teacher Amit must NOT be scheduled on Monday
+        timetable_id = res.data["timetable_id"]
+        monday_slots = TimetableSlot.objects.filter(
+            timetable_id=timetable_id,
+            teacher=self.teacher_profile,
+            day="MONDAY",
+        )
+        self.assertEqual(monday_slots.count(), 0)
+
+    def test_9_prefer_constraint_reaches_optimization(self):
+        """9. PREFER constraint reaches solver optimization with objective calculation."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "text": "Data Structures Friday morning prefer karo",
+            "semester": str(self.semester.id),
+            "academic_year": "2026-2027",
+        }
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertIn("objective_value", res.data)
+
+    def test_10_infeasible_result_creates_no_timetable(self):
+        """10. Infeasible constraints return 400 and create 0 database records."""
+        # Block all days for the only qualified teacher
+        from academics.models import TeacherAvailability
+
+        for d in ["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]:
+            TeacherAvailability.objects.create(
+                teacher=self.teacher_profile,
+                day=d,
+                start_time="09:00:00",
+                end_time="17:00:00",
+                is_available=False,
+            )
+
+        self.client.force_authenticate(user=self.staff_user)
+        initial_timetable_count = Timetable.objects.count()
+
+        payload = {
+            "text": "Data Structures Monday prefer karo",
+            "semester": str(self.semester.id),
+            "academic_year": "2026-2027",
+        }
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(res.data["status"], "INFEASIBLE")
+        self.assertEqual(Timetable.objects.count(), initial_timetable_count)
+
+    def test_11_existing_published_timetable_remains_unchanged(self):
+        """11. Pre-existing PUBLISHED timetable remains PUBLISHED when generating with constraints."""
+        pub_tt = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "text": "Amit Patil ko Monday avoid karo",
+            "semester": str(self.semester.id),
+            "academic_year": "2026-2027",
+        }
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["version"], 2)
+
+        pub_tt.refresh_from_db()
+        self.assertEqual(pub_tt.status, Timetable.Status.PUBLISHED)
+        self.assertEqual(pub_tt.version, 1)
+
+    def test_12_generated_timetable_is_not_auto_published(self):
+        """12. Newly generated timetable remains in GENERATED status and is NOT auto-published."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "text": "Data Structures Friday afternoon prefer karo",
+            "semester": str(self.semester.id),
+            "academic_year": "2026-2027",
+        }
+        res = self.client.post(self.generate_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        new_tt = Timetable.objects.get(id=res.data["timetable_id"])
+        self.assertEqual(new_tt.status, Timetable.Status.GENERATED)
+
+
 
 
 
