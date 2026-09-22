@@ -1,4 +1,10 @@
 from .conflict_detection import ConflictDetectionService
+from .constraint_integration import (
+    ConstraintIntegrationService,
+    HardRestrictions,
+    SoftPreference,
+    SolverConstraintMap,
+)
 from .constraint_parser import (
     ConstraintMode,
     ConstraintParserService,
@@ -18,6 +24,7 @@ from .constraint_validator import (
 from .timetable_generator import TimetableGenerationService
 from .timetable_solver import (
     DivisionInfo,
+    OptimizationConfig,
     RoomInfo,
     SchedulingSession,
     SolverConfig,
@@ -30,6 +37,10 @@ __all__ = [
     "ConflictDetectionService",
     "ConstraintParserService",
     "ConstraintValidatorService",
+    "ConstraintIntegrationService",
+    "SolverConstraintMap",
+    "HardRestrictions",
+    "SoftPreference",
     "StructuredConstraint",
     "ConstraintType",
     "ConstraintMode",
@@ -43,10 +54,12 @@ __all__ = [
     "TimetableSolver",
     "TimetableGenerationService",
     "SolverConfig",
+    "OptimizationConfig",
     "SchedulingSession",
     "TeacherInfo",
     "RoomInfo",
     "DivisionInfo",
     "TimeSlot",
 ]
+
 

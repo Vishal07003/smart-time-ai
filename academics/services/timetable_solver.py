@@ -95,6 +95,7 @@ class SolverConfig:
     random_seed: int = 42
     deterministic: bool = True
     optimization: OptimizationConfig = field(default_factory=OptimizationConfig)
+    custom_constraints: List[Any] = field(default_factory=list)
 
 
 class TimetableSolver:
@@ -173,6 +174,24 @@ class TimetableSolver:
         teachers_data = input_data.get("teachers", [])
         rooms_data = input_data.get("rooms", [])
         divisions_data = input_data.get("divisions", [])
+
+        # Parse and compile custom natural-language constraints (Phase 9C)
+        from academics.services.constraint_integration import (
+            ConstraintIntegrationService,
+            SolverConstraintMap,
+            _normalize_time_str,
+        )
+
+        constraints_input = (
+            input_data.get("constraints")
+            or getattr(self.config, "custom_constraints", None)
+            or []
+        )
+        if isinstance(constraints_input, SolverConstraintMap):
+            constraint_map = constraints_input
+        else:
+            integration_service = ConstraintIntegrationService()
+            constraint_map = integration_service.compile_constraints(constraints_input)
 
         if not sessions_data:
             return {
@@ -296,6 +315,17 @@ class TimetableSolver:
 
             # 3. Create decision variables for valid combinations
             for slot in self.time_slots:
+                # Check division / subject hard restrictions (Phase 9C)
+                if constraint_map.is_assignment_banned(
+                    teacher_id=None,
+                    subject_id=s.subject_id,
+                    division_id=s.division_id,
+                    day=slot.day,
+                    slot_start=slot.start_time,
+                    slot_end=slot.end_time,
+                ):
+                    continue
+
                 for teacher in candidate_teachers:
                     # Teacher Leave Check
                     if slot.day in teacher.leave_days:
@@ -309,6 +339,17 @@ class TimetableSolver:
                                 is_unavailable = True
                                 break
                     if is_unavailable:
+                        continue
+
+                    # Teacher Hard Natural-Language Constraints Check (Phase 9C)
+                    if constraint_map.is_assignment_banned(
+                        teacher_id=teacher.id,
+                        subject_id=s.subject_id,
+                        division_id=s.division_id,
+                        day=slot.day,
+                        slot_start=slot.start_time,
+                        slot_end=slot.end_time,
+                    ):
                         continue
 
                     for room in candidate_rooms:
@@ -332,6 +373,7 @@ class TimetableSolver:
                         else:
                             div_key = (s.division_id, slot.slot_index)
                             division_slot_vars.setdefault(div_key, []).append(x_var)
+
 
         # If any session has 0 candidate variables, the model is immediately infeasible
         has_empty_candidates = False
@@ -525,6 +567,46 @@ class TimetableSolver:
                     load_diff = model.NewIntVar(0, max_possible, f"load_diff_{d_id[:8]}")
                     model.Add(load_diff == max_load - min_load)
                     penalties.append(load_diff * opt.daily_load_balance_weight)
+
+            # 6. NATURAL_LANGUAGE_PREFERENCES (Phase 9C Soft Constraints)
+            if constraint_map.soft_preferences:
+                for pref in constraint_map.soft_preferences:
+                    for s in sessions:
+                        match_session = True
+                        if pref.constraint_type in ("SUBJECT_TIME_PREFERENCE", "SUBJECT_DAY_RESTRICTION"):
+                            if pref.target_id and s.subject_id != pref.target_id:
+                                match_session = False
+                        elif pref.constraint_type == "SESSION_TIME_PREFERENCE":
+                            if pref.session_type and s.session_type != pref.session_type:
+                                match_session = False
+                            if pref.target_id and s.subject_id != pref.target_id:
+                                match_session = False
+                        elif pref.constraint_type == "DIVISION_TIME_RESTRICTION":
+                            if pref.target_id and s.division_id != pref.target_id:
+                                match_session = False
+
+                        if not match_session:
+                            continue
+
+                        for x_var, slot, t_id, r_id in session_var_map[s.id]:
+                            if pref.constraint_type in ("TEACHER_TIME_RESTRICTION", "TEACHER_DAY_RESTRICTION"):
+                                if pref.target_id and t_id != pref.target_id:
+                                    continue
+
+                            in_preferred = True
+                            if pref.preferred_day and slot.day != pref.preferred_day:
+                                in_preferred = False
+
+                            if pref.preferred_start_time and pref.preferred_end_time:
+                                n_slot_start = _normalize_time_str(slot.start_time)
+                                n_slot_end = _normalize_time_str(slot.end_time)
+                                n_pref_start = _normalize_time_str(pref.preferred_start_time)
+                                n_pref_end = _normalize_time_str(pref.preferred_end_time)
+                                if not (n_slot_start >= n_pref_start and n_slot_end <= n_pref_end):
+                                    in_preferred = False
+
+                            if not in_preferred:
+                                penalties.append(x_var * pref.penalty_weight)
 
         if penalties:
             model.Minimize(sum(penalties))
