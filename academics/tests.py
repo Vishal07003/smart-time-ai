@@ -24,7 +24,14 @@ from academics.validators import (
     validate_non_empty_name,
     validate_positive_integer,
 )
-from accounts.models import User
+from academics.services.constraint_parser import StructuredConstraint
+from academics.services.constraint_validator import (
+    ConstraintValidatorService,
+    ValidationErrorCode,
+    ValidationErrorDetail,
+    ValidationResult,
+)
+from accounts.models import TeacherProfile, User
 
 UserModel = get_user_model()
 
@@ -3099,6 +3106,322 @@ class NaturalLanguageConstraintParserTests(APITestCase):
         self.assertEqual(res.constraint.day, "FRIDAY")
         self.assertEqual(res.constraint.time_range, "AFTERNOON")
         self.assertEqual(res.constraint.mode, "AVOID")
+
+
+class ConstraintValidatorServiceTests(APITestCase):
+    """
+    Unit and integration tests for Phase 9B ConstraintValidatorService.
+    """
+
+    def setUp(self):
+        self.validator = ConstraintValidatorService()
+
+        # Create test department, program, semester
+        self.dept = Department.objects.create(name="Computer Engineering", code="CE_V")
+        self.program = Program.objects.create(
+            department=self.dept,
+            name="B.Tech CS",
+            code="BTCS_V",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=5,
+            academic_year="2026-2027",
+        )
+
+        # Create divisions and batches
+        self.div_a = Division.objects.create(semester=self.semester, name="A", capacity=60)
+        self.div_b = Division.objects.create(semester=self.semester, name="B", capacity=60)
+        self.batch_a1 = PracticalBatch.objects.create(division=self.div_a, name="B1", capacity=20)
+        self.batch_b1 = PracticalBatch.objects.create(division=self.div_b, name="B1", capacity=20)
+
+        # Create subjects
+        self.subject_dsa = Subject.objects.create(
+            program=self.program,
+            name="Data Structures",
+            code="CS301_V",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        self.subject_dbms = Subject.objects.create(
+            program=self.program,
+            name="Database Systems",
+            code="CS302_V",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+
+        # Create teachers
+        self.user_teacher_1 = UserModel.objects.create_user(
+            username="teacher_amit_v",
+            email="amit.v@example.com",
+            first_name="Amit",
+            last_name="Patil",
+            role=UserModel.Role.TEACHER,
+        )
+        self.teacher_amit = TeacherProfile.objects.create(
+            user=self.user_teacher_1,
+            employee_code="EMP_AMIT_V",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        self.user_teacher_2 = UserModel.objects.create_user(
+            username="teacher_amit_kumar_v",
+            email="amit.k.v@example.com",
+            first_name="Amit",
+            last_name="Kumar",
+            role=UserModel.Role.TEACHER,
+        )
+        self.teacher_amit_k = TeacherProfile.objects.create(
+            user=self.user_teacher_2,
+            employee_code="EMP_AMITK_V",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        self.user_inactive_teacher = UserModel.objects.create_user(
+            username="teacher_inactive_v",
+            email="inactive.v@example.com",
+            first_name="Inactive",
+            last_name="Teacher",
+            role=UserModel.Role.TEACHER,
+        )
+        self.teacher_inactive = TeacherProfile.objects.create(
+            user=self.user_inactive_teacher,
+            employee_code="EMP_INACT_V",
+            department=self.dept,
+            status=TeacherProfile.Status.INACTIVE,
+        )
+
+    def test_1_valid_teacher_time_restriction(self):
+        """1. Valid teacher time restriction normalizes to teacher_id and 24-hr times."""
+        raw = {
+            "constraint_type": "TEACHER_TIME_RESTRICTION",
+            "teacher": "Amit Patil",
+            "day": "MONDAY",
+            "start_time": "09:00",
+            "end_time": "12:00",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw, semester=self.semester)
+        self.assertTrue(res.valid)
+        self.assertEqual(res.constraint["constraint_type"], "TEACHER_TIME_RESTRICTION")
+        self.assertEqual(res.constraint["teacher_id"], str(self.teacher_amit.id))
+        self.assertEqual(res.constraint["day"], "MONDAY")
+        self.assertEqual(res.constraint["start_time"], "09:00")
+        self.assertEqual(res.constraint["end_time"], "12:00")
+        self.assertEqual(res.constraint["mode"], "AVOID")
+        self.assertEqual(res.errors, [])
+
+    def test_2_unknown_teacher(self):
+        """2. Unknown teacher returns NOT_FOUND error."""
+        raw = {
+            "constraint_type": "TEACHER_TIME_RESTRICTION",
+            "teacher": "NonExistentTeacher",
+            "day": "MONDAY",
+            "start_time": "09:00",
+            "end_time": "12:00",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw)
+        self.assertFalse(res.valid)
+        self.assertIsNone(res.constraint)
+        self.assertTrue(any(e.code == "NOT_FOUND" and e.field == "teacher" for e in res.errors))
+
+    def test_3_ambiguous_teacher_entity(self):
+        """3. Ambiguous teacher name returns AMBIGUOUS error instead of picking arbitrarily."""
+        raw = {
+            "constraint_type": "TEACHER_TIME_RESTRICTION",
+            "teacher": "Amit",  # Both Amit Patil and Amit Kumar match
+            "day": "MONDAY",
+            "start_time": "09:00",
+            "end_time": "12:00",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw)
+        self.assertFalse(res.valid)
+        self.assertIsNone(res.constraint)
+        self.assertTrue(any(e.code == "AMBIGUOUS" and e.field == "teacher" for e in res.errors))
+
+    def test_4_valid_subject_day_restriction(self):
+        """4. Valid subject day restriction normalizes subject to subject_id."""
+        raw = {
+            "constraint_type": "SUBJECT_DAY_RESTRICTION",
+            "subject": "CS301_V",
+            "day": "FRIDAY",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw, semester=self.semester)
+        self.assertTrue(res.valid)
+        self.assertEqual(res.constraint["subject_id"], str(self.subject_dsa.id))
+        self.assertEqual(res.constraint["day"], "FRIDAY")
+        self.assertEqual(res.constraint["mode"], "AVOID")
+
+    def test_5_unknown_subject(self):
+        """5. Unknown subject returns NOT_FOUND error."""
+        raw = {
+            "constraint_type": "SUBJECT_DAY_RESTRICTION",
+            "subject": "Quantum Computing 999",
+            "day": "FRIDAY",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw, semester=self.semester)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "NOT_FOUND" and e.field == "subject" for e in res.errors))
+
+    def test_6_valid_division_restriction(self):
+        """6. Valid division restriction normalizes division to division_id."""
+        raw = {
+            "constraint_type": "DIVISION_TIME_RESTRICTION",
+            "division": "Div A",
+            "day": "TUESDAY",
+            "start_time": "14:00",
+            "end_time": "16:00",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw, semester=self.semester)
+        self.assertTrue(res.valid)
+        self.assertEqual(res.constraint["division_id"], str(self.div_a.id))
+        self.assertEqual(res.constraint["day"], "TUESDAY")
+        self.assertEqual(res.constraint["start_time"], "14:00")
+        self.assertEqual(res.constraint["end_time"], "16:00")
+
+    def test_7_unknown_division(self):
+        """7. Unknown division returns NOT_FOUND error."""
+        raw = {
+            "constraint_type": "DIVISION_TIME_RESTRICTION",
+            "division": "Div Z",
+            "day": "TUESDAY",
+            "start_time": "14:00",
+            "end_time": "16:00",
+        }
+        res = self.validator.validate(raw, semester=self.semester)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "NOT_FOUND" and e.field == "division" for e in res.errors))
+
+    def test_8_batch_does_not_belong_to_division(self):
+        """8. Practical batch belonging to another division returns RELATIONSHIP_MISMATCH."""
+        raw = {
+            "constraint_type": "DIVISION_TIME_RESTRICTION",
+            "division_id": str(self.div_a.id),
+            "batch_id": str(self.batch_b1.id),  # Belongs to Div B, not Div A
+            "day": "WEDNESDAY",
+            "start_time": "10:00",
+            "end_time": "12:00",
+        }
+        res = self.validator.validate(raw, semester=self.semester)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "RELATIONSHIP_MISMATCH" and e.field == "batch" for e in res.errors))
+
+    def test_9_invalid_day(self):
+        """9. Invalid day value returns INVALID_VALUE error."""
+        raw = {
+            "constraint_type": "TEACHER_DAY_RESTRICTION",
+            "teacher_id": str(self.teacher_amit.id),
+            "day": "FUNDAY",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "INVALID_VALUE" and e.field == "day" for e in res.errors))
+
+    def test_10_invalid_time_range(self):
+        """10. Start time >= End time returns INVALID_TIME_RANGE error."""
+        raw = {
+            "constraint_type": "TEACHER_TIME_RESTRICTION",
+            "teacher_id": str(self.teacher_amit.id),
+            "day": "MONDAY",
+            "start_time": "14:00",
+            "end_time": "10:00",  # start > end
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "INVALID_TIME_RANGE" and e.field == "time_range" for e in res.errors))
+
+    def test_11_invalid_mode(self):
+        """11. Invalid mode returns INVALID_MODE error."""
+        raw = {
+            "constraint_type": "TEACHER_DAY_RESTRICTION",
+            "teacher_id": str(self.teacher_amit.id),
+            "day": "MONDAY",
+            "mode": "WANT_VERY_MUCH",
+        }
+        res = self.validator.validate(raw)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "INVALID_MODE" and e.field == "mode" for e in res.errors))
+
+    def test_12_valid_prefer_constraint(self):
+        """12. Valid PREFER constraint preserves mode=PREFER."""
+        raw = {
+            "constraint_type": "SUBJECT_TIME_PREFERENCE",
+            "subject": "CS301_V",
+            "time_range": "MORNING",
+            "mode": "PREFER",
+        }
+        res = self.validator.validate(raw, semester=self.semester)
+        self.assertTrue(res.valid)
+        self.assertEqual(res.constraint["mode"], "PREFER")
+        self.assertEqual(res.constraint["subject_id"], str(self.subject_dsa.id))
+        self.assertEqual(res.constraint["start_time"], "09:00")
+        self.assertEqual(res.constraint["end_time"], "12:00")
+
+    def test_13_valid_avoid_constraint(self):
+        """13. Valid AVOID constraint preserves mode=AVOID."""
+        raw = {
+            "constraint_type": "TEACHER_DAY_RESTRICTION",
+            "teacher": "EMP_AMIT_V",
+            "day": "THURSDAY",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw)
+        self.assertTrue(res.valid)
+        self.assertEqual(res.constraint["mode"], "AVOID")
+        self.assertEqual(res.constraint["teacher_id"], str(self.teacher_amit.id))
+        self.assertEqual(res.constraint["day"], "THURSDAY")
+
+    def test_14_normalization_resolves_names_and_codes_to_ids(self):
+        """14. Normalization resolves names/codes to database UUID strings."""
+        structured = StructuredConstraint(
+            constraint_type="TEACHER_TIME_RESTRICTION",
+            teacher="EMP_AMIT_V",
+            day="MONDAY",
+            time_range="MORNING",
+            mode="AVOID",
+        )
+        res = self.validator.validate(structured)
+        self.assertTrue(res.valid)
+        self.assertEqual(res.constraint["teacher_id"], str(self.teacher_amit.id))
+        self.assertEqual(res.constraint["start_time"], "09:00")
+        self.assertEqual(res.constraint["end_time"], "12:00")
+        self.assertEqual(res.constraint["day"], "MONDAY")
+
+    def test_15_malformed_or_unsupported_constraint_type(self):
+        """15. Malformed or unsupported constraint type returns UNSUPPORTED_TYPE error."""
+        raw = {
+            "constraint_type": "INVALID_CUSTOM_TYPE",
+            "teacher": "Amit Patil",
+        }
+        res = self.validator.validate(raw)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "UNSUPPORTED_TYPE" and e.field == "constraint_type" for e in res.errors))
+
+    def test_16_inactive_teacher_validation(self):
+        """16. Inactive teacher returns INACTIVE_TEACHER validation error."""
+        raw = {
+            "constraint_type": "TEACHER_DAY_RESTRICTION",
+            "teacher": "Inactive Teacher",
+            "day": "MONDAY",
+            "mode": "AVOID",
+        }
+        res = self.validator.validate(raw)
+        self.assertFalse(res.valid)
+        self.assertTrue(any(e.code == "INACTIVE_TEACHER" and e.field == "teacher" for e in res.errors))
+
 
 
 
