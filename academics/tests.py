@@ -2913,6 +2913,195 @@ class TimetableOptimizationSolverTests(APITestCase):
         self.assertEqual(len(res["assignments"]), 1)
 
 
+class NaturalLanguageConstraintParserTests(APITestCase):
+    """
+    Phase 9A: Unit tests for Natural-Language Constraint Parsing and Validation.
+    """
+
+    def setUp(self):
+        from academics.services.constraint_parser import (
+            ConstraintMode,
+            ConstraintParserService,
+            ConstraintType,
+            ParsingContext,
+            StructuredConstraint,
+            TimeRange,
+        )
+
+        self.parser = ConstraintParserService()
+        self.context = ParsingContext(
+            teachers=[
+                {"id": "t-1", "name": "Amit Patil", "employee_code": "EMP01"},
+                {"id": "t-2", "name": "Amit Sharma", "employee_code": "EMP02"},
+                {"id": "t-3", "name": "Rohan Deshmukh", "employee_code": "EMP03"},
+            ],
+            subjects=[
+                {"id": "s-1", "name": "Java Programming", "code": "CS801"},
+                {"id": "s-2", "name": "Data Structures", "code": "CS802"},
+            ],
+            divisions=[
+                {"id": "d-1", "name": "Div-A"},
+                {"id": "d-2", "name": "Div-B"},
+            ],
+            allowed_days=["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY"],
+        )
+
+    def test_1_valid_teacher_time_restriction(self):
+        """Input: 'Amit Patil ko Monday morning classes mat do.' -> valid TEACHER_TIME_RESTRICTION"""
+        res = self.parser.parse("Amit Patil ko Monday morning classes mat do.", context=self.context)
+        self.assertTrue(res.success, f"Errors: {res.errors}")
+        c = res.constraint
+        self.assertEqual(c.constraint_type, "TEACHER_TIME_RESTRICTION")
+        self.assertEqual(c.teacher, "Amit Patil")
+        self.assertEqual(c.teacher_id, "t-1")
+        self.assertEqual(c.day, "MONDAY")
+        self.assertEqual(c.time_range, "MORNING")
+        self.assertEqual(c.start_time, "09:00")
+        self.assertEqual(c.end_time, "12:00")
+        self.assertEqual(c.mode, "AVOID")
+
+    def test_2_valid_subject_day_restriction(self):
+        """Input: 'Java ko Monday ko avoid karo.' -> valid SUBJECT_DAY_RESTRICTION"""
+        res = self.parser.parse("Java ko Monday ko avoid karo.", context=self.context)
+        self.assertTrue(res.success, f"Errors: {res.errors}")
+        c = res.constraint
+        self.assertEqual(c.constraint_type, "SUBJECT_DAY_RESTRICTION")
+        self.assertEqual(c.subject, "Java Programming")
+        self.assertEqual(c.subject_id, "s-1")
+        self.assertEqual(c.day, "MONDAY")
+        self.assertEqual(c.mode, "AVOID")
+
+    def test_3_valid_session_time_preference(self):
+        """Input: 'Practical classes afternoon mein prefer karo.' -> valid SESSION_TIME_PREFERENCE"""
+        res = self.parser.parse("Practical classes afternoon mein prefer karo.")
+        self.assertTrue(res.success, f"Errors: {res.errors}")
+        c = res.constraint
+        self.assertEqual(c.constraint_type, "SESSION_TIME_PREFERENCE")
+        self.assertEqual(c.session_type, "PRACTICAL")
+        self.assertEqual(c.time_range, "AFTERNOON")
+        self.assertEqual(c.start_time, "12:00")
+        self.assertEqual(c.end_time, "16:00")
+        self.assertEqual(c.mode, "PREFER")
+
+    def test_4_invalid_day_returns_error(self):
+        """Invalid day strings are rejected with structured errors."""
+        data = {
+            "constraint_type": "SUBJECT_DAY_RESTRICTION",
+            "subject": "Java",
+            "day": "FUNDAY",
+            "mode": "AVOID",
+        }
+        res = self.parser.validate_constraint_data(data)
+        self.assertFalse(res.success)
+        self.assertTrue(any("Invalid day" in err for err in res.errors))
+
+    def test_5_invalid_time_format_and_range_returns_error(self):
+        """Malformed times or start_time >= end_time are rejected."""
+        # Malformed time format
+        data1 = {
+            "constraint_type": "TEACHER_TIME_RESTRICTION",
+            "teacher": "Rohan",
+            "start_time": "25:00",
+            "end_time": "12:00",
+        }
+        res1 = self.parser.validate_constraint_data(data1)
+        self.assertFalse(res1.success)
+        self.assertTrue(any("Invalid time" in err for err in res1.errors))
+
+        # start_time >= end_time
+        data2 = {
+            "constraint_type": "TEACHER_TIME_RESTRICTION",
+            "teacher": "Rohan",
+            "start_time": "14:00",
+            "end_time": "10:00",
+        }
+        res2 = self.parser.validate_constraint_data(data2)
+        self.assertFalse(res2.success)
+        self.assertTrue(any("strictly before" in err for err in res2.errors))
+
+    def test_6_unsupported_constraint_type_returns_error(self):
+        """Unsupported constraint types are rejected."""
+        data = {
+            "constraint_type": "RANDOM_UNSUPPORTED_TYPE",
+            "teacher": "Amit",
+        }
+        res = self.parser.validate_constraint_data(data)
+        self.assertFalse(res.success)
+        self.assertTrue(any("Unsupported constraint_type" in err for err in res.errors))
+
+    def test_7_ambiguous_and_unknown_entities(self):
+        """Ambiguous or unknown entity references return structured validation errors."""
+        # 'Amit' matches Amit Patil (t-1) and Amit Sharma (t-2) in context
+        res_ambiguous = self.parser.parse("Amit ko Monday morning classes mat do.", context=self.context)
+        self.assertFalse(res_ambiguous.success)
+        self.assertTrue(any("Ambiguous teacher reference" in err for err in res_ambiguous.errors))
+
+        # 'Prof. XYZ' does not exist in context
+        res_unknown = self.parser.parse("Prof. XYZ ko Monday ko avoid karo.", context=self.context)
+        self.assertFalse(res_unknown.success)
+        self.assertTrue(any("Unknown teacher" in err for err in res_unknown.errors))
+
+    def test_8_malformed_llm_output_handling(self):
+        """Non-dictionary or invalid JSON LLM outputs are handled gracefully."""
+        # Non-dict
+        res1 = self.parser.parse("test", llm_output=["not a dict"])
+        self.assertFalse(res1.success)
+        self.assertTrue(any("Malformed constraint data" in err for err in res1.errors))
+
+        # Invalid JSON string
+        res2 = self.parser.parse("test", llm_output="{broken json")
+        self.assertFalse(res2.success)
+        self.assertTrue(any("Malformed LLM JSON output" in err for err in res2.errors))
+
+    def test_9_avoid_vs_prefer_modes(self):
+        """AVOID vs PREFER modes are preserved and validated correctly."""
+        # PREFER mode
+        data_pref = {
+            "constraint_type": "SUBJECT_TIME_PREFERENCE",
+            "subject": "Data Structures",
+            "time_range": "MORNING",
+            "mode": "PREFER",
+        }
+        res_pref = self.parser.validate_constraint_data(data_pref)
+        self.assertTrue(res_pref.success)
+        self.assertEqual(res_pref.constraint.mode, "PREFER")
+
+        # Invalid mode
+        data_inv = {
+            "constraint_type": "SUBJECT_TIME_PREFERENCE",
+            "subject": "Data Structures",
+            "time_range": "MORNING",
+            "mode": "INVALID_MODE",
+        }
+        res_inv = self.parser.validate_constraint_data(data_inv)
+        self.assertFalse(res_inv.success)
+        self.assertTrue(any("Invalid mode" in err for err in res_inv.errors))
+
+    def test_10_llm_provider_integration(self):
+        """Custom LLM provider hook is called and its output validated."""
+        from academics.services.constraint_parser import ConstraintParserService
+
+        def mock_llm_provider(text, context):
+            return {
+                "constraint_type": "DIVISION_TIME_RESTRICTION",
+                "division": "Div-A",
+                "day": "FRIDAY",
+                "time_range": "AFTERNOON",
+                "mode": "AVOID",
+            }
+
+        custom_parser = ConstraintParserService(llm_provider=mock_llm_provider)
+        res = custom_parser.parse("Div-A Friday afternoon classes avoid karo.", context=self.context)
+        self.assertTrue(res.success)
+        self.assertEqual(res.constraint.constraint_type, "DIVISION_TIME_RESTRICTION")
+        self.assertEqual(res.constraint.division, "Div-A")
+        self.assertEqual(res.constraint.division_id, "d-1")
+        self.assertEqual(res.constraint.day, "FRIDAY")
+        self.assertEqual(res.constraint.time_range, "AFTERNOON")
+        self.assertEqual(res.constraint.mode, "AVOID")
+
+
+
 
 
 

@@ -1,4 +1,14 @@
 from .conflict_detection import ConflictDetectionService
+from .constraint_parser import (
+    ConstraintMode,
+    ConstraintParserService,
+    ConstraintType,
+    ParseResult,
+    ParsingContext,
+    SessionType,
+    StructuredConstraint,
+    TimeRange,
+)
 from .timetable_generator import TimetableGenerationService
 from .timetable_solver import (
     DivisionInfo,
@@ -12,6 +22,14 @@ from .timetable_solver import (
 
 __all__ = [
     "ConflictDetectionService",
+    "ConstraintParserService",
+    "StructuredConstraint",
+    "ConstraintType",
+    "ConstraintMode",
+    "TimeRange",
+    "SessionType",
+    "ParseResult",
+    "ParsingContext",
     "TimetableSolver",
     "TimetableGenerationService",
     "SolverConfig",
