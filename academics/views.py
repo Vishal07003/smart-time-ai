@@ -67,6 +67,7 @@ from .services.conflict_detection import ConflictDetectionService
 from .services.constraint_parser import ConstraintParserService, ParsingContext
 from .services.constraint_validator import ConstraintValidatorService
 from .services.rescheduling_service import ReschedulingSuggestionService
+from .services.staff_dashboard_service import StaffDashboardService
 from .services.substitute_service import SubstituteSuggestionService
 from .services.timetable_generator import TimetableGenerationService
 
@@ -1327,6 +1328,21 @@ class TimetableChangeLogViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(created_at__lte=date_to)
 
         return qs
+
+
+class StaffDashboardView(APIView):
+    """
+    Staff-only endpoint aggregating real-time operational dashboard data:
+    summary metrics, today's schedule, current/upcoming/completed classes,
+    pending teacher leaves, pending substitutions, detected conflicts,
+    recent change history, and quick action indicators.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def get(self, request, *args, **kwargs):
+        dashboard_data = StaffDashboardService.get_dashboard_data(user=request.user)
+        return Response(dashboard_data, status=status.HTTP_200_OK)
 
 
 

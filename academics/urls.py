@@ -14,6 +14,7 @@ from .views import (
     ReschedulingConfirmView,
     ReschedulingSuggestionsView,
     SemesterViewSet,
+    StaffDashboardView,
     SubjectViewSet,
     SubstituteSuggestionsView,
     TeacherAvailabilityViewSet,
@@ -73,6 +74,11 @@ urlpatterns = [
         "rescheduling/confirm/",
         ReschedulingConfirmView.as_view(),
         name="rescheduling-confirm",
+    ),
+    path(
+        "staff/dashboard/",
+        StaffDashboardView.as_view(),
+        name="staff-dashboard",
     ),
 ] + router.urls
 

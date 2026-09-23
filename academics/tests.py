@@ -5823,6 +5823,345 @@ class TimetableHistoryWorkflowTests(APITestCase):
         self.assertTrue(len(res.data["suggestions"]) > 0)
 
 
+class StaffDashboardWorkflowTests(APITestCase):
+    """
+    Focused Phase 12 Test Suite: Staff Dashboard APIs.
+    Verifies operational summary metrics, today's schedule with current/upcoming/completed
+    session classification, pending leaves, substitutions, unresolved conflicts, recent change history,
+    and strict Staff-only role permissions.
+    """
+
+    def setUp(self):
+        from accounts.models import StudentProfile, TeacherProfile, User
+        self.User = User
+        self.TeacherProfile = TeacherProfile
+        self.StudentProfile = StudentProfile
+
+        # 1. Users
+        self.staff_user = User.objects.create_user(
+            username="dash_staff_user",
+            email="dash_staff@example.com",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_amit_user = User.objects.create_user(
+            username="amit_dash_teacher",
+            email="amit_dash@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=User.Role.TEACHER,
+        )
+        self.teacher_suresh_user = User.objects.create_user(
+            username="suresh_dash_teacher",
+            email="suresh_dash@example.com",
+            password="Password123!",
+            first_name="Suresh",
+            last_name="Raina",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = User.objects.create_user(
+            username="dash_student_user",
+            email="dash_student@example.com",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        # 2. Academic Entities
+        self.department = Department.objects.create(
+            name="Dashboard Computer Science Dept",
+            code="CS_DASH_12",
+        )
+        self.program = Program.objects.create(
+            department=self.department,
+            name="B.Tech Dashboard CS",
+            code="BTCS_DASH_12",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=7,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(
+            semester=self.semester,
+            name="Division A",
+            capacity=60,
+        )
+
+        # 3. Profiles
+        self.teacher_amit = TeacherProfile.objects.create(
+            user=self.teacher_amit_user,
+            department=self.department,
+            employee_code="T_DASH_01",
+            designation="Professor",
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_suresh = TeacherProfile.objects.create(
+            user=self.teacher_suresh_user,
+            department=self.department,
+            employee_code="T_DASH_02",
+            designation="Associate Professor",
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.student_profile = StudentProfile.objects.create(
+            user=self.student_user,
+            student_code="STU_DASH_01",
+            roll_number="1",
+            division=self.division,
+            admission_year=2024,
+            status=StudentProfile.Status.ACTIVE,
+        )
+
+        # 4. Rooms & Subjects
+        self.classroom_101 = Classroom.objects.create(
+            building="Dashboard Block",
+            room_number="101",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.subject_java = Subject.objects.create(
+            program=self.program,
+            name="Java System Architecture",
+            code="CS701_DASH",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        TeacherSubject.objects.create(teacher=self.teacher_amit, subject=self.subject_java, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_suresh, subject=self.subject_java, priority=2)
+
+        # 5. Published Timetable & Slots
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+
+        # Wednesday Slots for testing time classifications (2026-09-23 is Wednesday)
+        self.slot_wed_completed = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="09:00:00",
+            end_time="10:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        self.slot_wed_current = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_suresh,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        self.slot_wed_upcoming = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="11:00:00",
+            end_time="12:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.dashboard_url = "/api/v1/staff/dashboard/"
+
+    def test_01_staff_can_access_dashboard(self):
+        """1. Staff can successfully retrieve the dashboard payload with all expected keys."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        expected_keys = [
+            "summary",
+            "today",
+            "teacher_leaves",
+            "substitutions",
+            "conflicts",
+            "recent_changes",
+            "quick_actions",
+        ]
+        for k in expected_keys:
+            self.assertIn(k, res.data)
+
+    def test_02_teacher_forbidden_from_dashboard(self):
+        """2. Teacher role users are forbidden (403) from accessing staff dashboard."""
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_03_student_forbidden_and_unauthenticated_unauthorized(self):
+        """3. Student role users receive 403; unauthenticated users receive 401."""
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.logout()
+        res_unauth = self.client.get(self.dashboard_url)
+        self.assertEqual(res_unauth.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_04_summary_counts_accurate(self):
+        """4. Summary counts reflect active teachers, active students, leaves, and conflicts."""
+        # Create pending leave
+        TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date="2026-10-10",
+            end_date="2026-10-10",
+            reason="Medical",
+            status=TeacherLeave.Status.PENDING,
+        )
+        # Create pending substitution
+        TeacherSubstitution.objects.create(
+            timetable_slot=self.slot_wed_completed,
+            absent_teacher=self.teacher_amit,
+            substitute_teacher=self.teacher_suresh,
+            status=TeacherSubstitution.Status.PENDING,
+            assigned_by=self.staff_user,
+        )
+        # Create conflict
+        TimetableConflict.objects.create(
+            timetable=self.timetable,
+            conflict_type="ROOM_CLASH",
+            severity="HARD",
+            description="Room double booking detected",
+            status=TimetableConflict.Status.DETECTED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        summary = res.data["summary"]
+        self.assertEqual(summary["active_teachers_count"], 2)
+        self.assertEqual(summary["active_students_count"], 1)
+        self.assertEqual(summary["pending_leaves_count"], 1)
+        self.assertEqual(summary["pending_substitutions_count"], 1)
+        self.assertEqual(summary["unresolved_conflicts_count"], 1)
+
+    def test_05_today_classes_payload(self):
+        """5. Today's classes return structured details (subject, teacher, division, room, times)."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        today = res.data["today"]
+        self.assertIn("classes", today)
+        self.assertIn("day", today)
+        if len(today["classes"]) > 0:
+            sample_class = today["classes"][0]
+            self.assertIn("id", sample_class)
+            self.assertIn("subject", sample_class)
+            self.assertIn("teacher", sample_class)
+            self.assertIn("division", sample_class)
+            self.assertIn("start_time", sample_class)
+            self.assertIn("end_time", sample_class)
+            self.assertIn("session_type", sample_class)
+            self.assertIn("status", sample_class)
+
+    def test_06_current_upcoming_completed_classification(self):
+        """6. Classes for today are accurately categorized into completed, current, and upcoming."""
+        from datetime import datetime
+        from academics.services.staff_dashboard_service import StaffDashboardService
+
+        # Reference time: Wednesday at 10:30 (during slot_wed_current 10:00-11:00)
+        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        data = StaffDashboardService.get_dashboard_data(user=self.staff_user, reference_datetime=ref_dt)
+
+        today = data["today"]
+        self.assertEqual(today["day"], "WEDNESDAY")
+
+        completed_ids = [c["id"] for c in today["completed"]]
+        current_ids = [c["id"] for c in today["current"]]
+        upcoming_ids = [c["id"] for c in today["upcoming"]]
+
+        self.assertIn(str(self.slot_wed_completed.id), completed_ids)
+        self.assertIn(str(self.slot_wed_current.id), current_ids)
+        self.assertIn(str(self.slot_wed_upcoming.id), upcoming_ids)
+
+    def test_07_pending_leaves_substitutions_conflicts_included(self):
+        """7. Pending leaves, substitutions, and conflicts appear in dedicated dashboard lists."""
+        leave = TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date="2026-10-10",
+            end_date="2026-10-10",
+            reason="Conference Leave",
+            status=TeacherLeave.Status.PENDING,
+        )
+        sub = TeacherSubstitution.objects.create(
+            timetable_slot=self.slot_wed_completed,
+            absent_teacher=self.teacher_amit,
+            substitute_teacher=self.teacher_suresh,
+            status=TeacherSubstitution.Status.PENDING,
+            assigned_by=self.staff_user,
+        )
+        conflict = TimetableConflict.objects.create(
+            timetable=self.timetable,
+            conflict_type="TEACHER_CLASH",
+            severity="HARD",
+            description="Teacher clash detected",
+            status=TimetableConflict.Status.DETECTED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        leave_ids = [l["id"] for l in res.data["teacher_leaves"]]
+        self.assertIn(str(leave.id), leave_ids)
+
+        sub_ids = [s["id"] for s in res.data["substitutions"]]
+        self.assertIn(str(sub.id), sub_ids)
+
+        conflict_ids = [c["id"] for c in res.data["conflicts"]]
+        self.assertIn(str(conflict.id), conflict_ids)
+
+    def test_08_recent_history_included(self):
+        """8. Recent change logs from TimetableChangeLog are populated in dashboard."""
+        log = TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            action=TimetableChangeLog.Action.TIMETABLE_PUBLISHED,
+            changed_by=self.staff_user,
+            reason="Published for semester",
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        log_ids = [l["id"] for l in res.data["recent_changes"]]
+        self.assertIn(str(log.id), log_ids)
+
+    def test_09_quick_actions_data(self):
+        """9. Quick actions dictionary provides actionable indicators for Staff."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        qa = res.data["quick_actions"]
+        self.assertTrue(qa["can_generate"])
+        self.assertIn("unresolved_conflicts", qa)
+        self.assertIn("pending_leaves", qa)
+        self.assertIn("pending_substitutions", qa)
+        self.assertIn("recent_changes_count", qa)
+
+
 
 
 
