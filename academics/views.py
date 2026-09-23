@@ -28,6 +28,7 @@ from .models import (
     TeacherSubject,
     TeacherSubstitution,
     Timetable,
+    TimetableChangeLog,
     TimetableConflict,
     TimetableSlot,
 )
@@ -56,6 +57,7 @@ from .serializers import (
     TeacherSubjectSerializer,
     TeacherSubstitutionCreateSerializer,
     TeacherSubstitutionSerializer,
+    TimetableChangeLogSerializer,
     TimetableConflictSerializer,
     TimetableGenerateRequestSerializer,
     TimetableSerializer,
@@ -513,7 +515,9 @@ class TimetableViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        timetable = serializer.save(created_by=self.request.user)
+        from academics.services.timetable_history_service import TimetableHistoryService
+        TimetableHistoryService.log_timetable_created(timetable, changed_by=self.request.user)
 
     def perform_destroy(self, instance):
         if instance.status == Timetable.Status.PUBLISHED:
@@ -533,18 +537,29 @@ class TimetableViewSet(viewsets.ModelViewSet):
         timetable = self.get_object()
 
         with transaction.atomic():
-            # 1. Archive any previously PUBLISHED timetables for the same semester and academic year
-            Timetable.objects.filter(
-                semester=timetable.semester,
-                academic_year=timetable.academic_year,
-                status=Timetable.Status.PUBLISHED,
-            ).exclude(pk=timetable.pk).update(status=Timetable.Status.ARCHIVED)
+            from academics.services.timetable_history_service import TimetableHistoryService
 
+            # 1. Archive any previously PUBLISHED timetables for the same semester and academic year
+            prev_published = list(
+                Timetable.objects.filter(
+                    semester=timetable.semester,
+                    academic_year=timetable.academic_year,
+                    status=Timetable.Status.PUBLISHED,
+                ).exclude(pk=timetable.pk)
+            )
+            for prev in prev_published:
+                prev.status = Timetable.Status.ARCHIVED
+                prev.save(update_fields=["status", "updated_at"])
+                TimetableHistoryService.log_timetable_archived(prev, changed_by=request.user)
+
+            old_status = timetable.status
             # 2. Mark this timetable as PUBLISHED (preserve published_at if already set)
             timetable.status = Timetable.Status.PUBLISHED
             if not timetable.published_at:
                 timetable.published_at = timezone.now()
             timetable.save(update_fields=["status", "published_at", "updated_at"])
+
+            TimetableHistoryService.log_timetable_published(timetable, changed_by=request.user, old_status=old_status)
 
         serializer = self.get_serializer(timetable)
         return Response(serializer.data, status=status.HTTP_200_OK)
@@ -558,8 +573,13 @@ class TimetableViewSet(viewsets.ModelViewSet):
     )
     def archive(self, request, pk=None):
         timetable = self.get_object()
+        old_status = timetable.status
         timetable.status = Timetable.Status.ARCHIVED
         timetable.save()
+
+        from academics.services.timetable_history_service import TimetableHistoryService
+        TimetableHistoryService.log_timetable_archived(timetable, changed_by=request.user, old_status=old_status)
+
         serializer = self.get_serializer(timetable)
         return Response(serializer.data, status=status.HTTP_200_OK)
 
@@ -1254,6 +1274,59 @@ class ReschedulingConfirmView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TimetableChangeLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Staff-only read-only API for viewing immutable TimetableChangeLog audit records.
+    Supports filtering by ?timetable={uuid}, ?timetable_slot={uuid}, ?action={ACTION},
+    ?changed_by={uuid}, ?date_from={iso}, ?date_to={iso}.
+    """
+
+    queryset = TimetableChangeLog.objects.select_related(
+        "timetable", "timetable_slot", "changed_by"
+    ).all()
+    serializer_class = TimetableChangeLogSerializer
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "action",
+        "reason",
+        "changed_by__username",
+        "changed_by__first_name",
+        "changed_by__last_name",
+    ]
+    ordering_fields = ["created_at", "action"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        timetable_id = self.request.query_params.get("timetable")
+        if timetable_id:
+            qs = qs.filter(timetable_id=timetable_id)
+
+        slot_id = self.request.query_params.get("timetable_slot")
+        if slot_id:
+            qs = qs.filter(timetable_slot_id=slot_id)
+
+        action_param = self.request.query_params.get("action")
+        if action_param:
+            qs = qs.filter(action=action_param.strip().upper())
+
+        changed_by_id = self.request.query_params.get("changed_by")
+        if changed_by_id:
+            qs = qs.filter(changed_by_id=changed_by_id)
+
+        date_from = self.request.query_params.get("date_from")
+        if date_from:
+            qs = qs.filter(created_at__gte=date_from)
+
+        date_to = self.request.query_params.get("date_to")
+        if date_to:
+            qs = qs.filter(created_at__lte=date_to)
+
+        return qs
 
 
 

@@ -16,6 +16,7 @@ from .models import (
     TeacherSubject,
     TeacherSubstitution,
     Timetable,
+    TimetableChangeLog,
     TimetableConflict,
     TimetableSlot,
 )
@@ -377,6 +378,38 @@ class SlotRescheduleAdmin(admin.ModelAdmin):
         "reason",
     )
     readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TimetableChangeLog)
+class TimetableChangeLogAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "action",
+        "timetable",
+        "timetable_slot",
+        "changed_by",
+        "reason",
+        "created_at",
+    )
+    list_filter = ("action", "created_at")
+    search_fields = (
+        "action",
+        "reason",
+        "changed_by__username",
+        "changed_by__first_name",
+        "changed_by__last_name",
+    )
+    readonly_fields = (
+        "id",
+        "timetable",
+        "timetable_slot",
+        "action",
+        "changed_by",
+        "reason",
+        "old_data",
+        "new_data",
+        "created_at",
+    )
 
 
 

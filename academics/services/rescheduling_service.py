@@ -723,6 +723,16 @@ class ReschedulingSuggestionService:
             created_by=user,
         )
 
+        # Phase 11: Log reschedule history
+        from academics.services.timetable_history_service import TimetableHistoryService
+        TimetableHistoryService.log_slot_rescheduled(
+            old_slot=slot,
+            new_slot=new_slot,
+            changed_by=user,
+            reason=reason,
+            new_timetable=new_timetable,
+        )
+
         return {
             "reschedule_id": str(reschedule.id),
             "status": reschedule.status,

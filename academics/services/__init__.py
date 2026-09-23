@@ -24,6 +24,7 @@ from .constraint_validator import (
 from .rescheduling_service import ReschedulingSuggestionService
 from .substitute_service import SubstituteSuggestionService
 from .timetable_generator import TimetableGenerationService
+from .timetable_history_service import TimetableHistoryService
 from .timetable_solver import (
     DivisionInfo,
     OptimizationConfig,
@@ -56,6 +57,7 @@ __all__ = [
     "ValidationErrorCode",
     "TimetableSolver",
     "TimetableGenerationService",
+    "TimetableHistoryService",
     "SolverConfig",
     "OptimizationConfig",
     "SchedulingSession",
