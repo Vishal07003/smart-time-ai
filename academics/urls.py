@@ -8,13 +8,16 @@ from .views import (
     DepartmentViewSet,
     DivisionViewSet,
     LaboratoryViewSet,
+    NotificationViewSet,
     PracticalBatchViewSet,
     ProgramViewSet,
     SemesterViewSet,
     SubjectViewSet,
+    SubstituteSuggestionsView,
     TeacherAvailabilityViewSet,
     TeacherLeaveViewSet,
     TeacherSubjectViewSet,
+    TeacherSubstitutionViewSet,
     TimetableConflictViewSet,
     TimetableSlotViewSet,
     TimetableViewSet,
@@ -38,6 +41,8 @@ router.register("laboratories", LaboratoryViewSet, basename="laboratory")
 router.register("timetables", TimetableViewSet, basename="timetable")
 router.register("timetable-slots", TimetableSlotViewSet, basename="timetable-slot")
 router.register("timetable-conflicts", TimetableConflictViewSet, basename="timetable-conflict")
+router.register("substitutions", TeacherSubstitutionViewSet, basename="substitution")
+router.register("notifications", NotificationViewSet, basename="notification")
 
 urlpatterns = [
     path(
@@ -50,5 +55,11 @@ urlpatterns = [
         ConstraintGenerateTimetableView.as_view(),
         name="constraint-generate-timetable",
     ),
+    path(
+        "substitutions/suggestions/",
+        SubstituteSuggestionsView.as_view(),
+        name="substitute-suggestions",
+    ),
 ] + router.urls
+
 

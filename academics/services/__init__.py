@@ -21,6 +21,7 @@ from .constraint_validator import (
     ValidationErrorDetail,
     ValidationResult,
 )
+from .substitute_service import SubstituteSuggestionService
 from .timetable_generator import TimetableGenerationService
 from .timetable_solver import (
     DivisionInfo,
@@ -38,6 +39,7 @@ __all__ = [
     "ConstraintParserService",
     "ConstraintValidatorService",
     "ConstraintIntegrationService",
+    "SubstituteSuggestionService",
     "SolverConstraintMap",
     "HardRestrictions",
     "SoftPreference",
@@ -61,5 +63,6 @@ __all__ = [
     "DivisionInfo",
     "TimeSlot",
 ]
+
 
 

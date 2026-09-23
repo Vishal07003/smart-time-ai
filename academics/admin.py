@@ -9,9 +9,11 @@ from .models import (
     Program,
     Semester,
     Subject,
+    Notification,
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
+    TeacherSubstitution,
     Timetable,
     TimetableConflict,
     TimetableSlot,
@@ -313,4 +315,43 @@ class TimetableConflictAdmin(admin.ModelAdmin):
     )
     ordering = ("-severity", "-created_at")
     readonly_fields = ("id", "created_at", "updated_at")
+
+
+@admin.register(TeacherSubstitution)
+class TeacherSubstitutionAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "timetable_slot",
+        "absent_teacher",
+        "substitute_teacher",
+        "status",
+        "assigned_by",
+        "assigned_at",
+    )
+    list_filter = ("status", "assigned_at")
+    search_fields = (
+        "absent_teacher__employee_code",
+        "absent_teacher__user__first_name",
+        "substitute_teacher__employee_code",
+        "substitute_teacher__user__first_name",
+        "reason",
+    )
+    readonly_fields = ("id", "assigned_at", "created_at", "updated_at")
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "recipient",
+        "notification_type",
+        "title",
+        "is_read",
+        "created_at",
+        "read_at",
+    )
+    list_filter = ("notification_type", "is_read", "created_at")
+    search_fields = ("recipient__username", "recipient__email", "title", "message")
+    readonly_fields = ("id", "created_at", "read_at")
+
 

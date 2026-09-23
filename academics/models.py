@@ -4,6 +4,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.db.models.functions import Lower
+from django.utils import timezone
 
 from .validators import (
     normalize_code,
@@ -1121,5 +1122,154 @@ class TimetableConflict(models.Model):
                 self.slot = s2
                 self.conflicting_slot = s1
         super().save(*args, **kwargs)
+
+
+class TeacherSubstitution(models.Model):
+    """
+    Represents a temporary substitution/replacement assignment for a TimetableSlot.
+    Preserves original TimetableSlot historically while designating the active substitute.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        CONFIRMED = "CONFIRMED", "Confirmed"
+        CANCELLED = "CANCELLED", "Cancelled"
+        DECLINED = "DECLINED", "Declined"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timetable_slot = models.ForeignKey(
+        "academics.TimetableSlot",
+        on_delete=models.CASCADE,
+        related_name="substitutions",
+        help_text="The affected timetable slot",
+    )
+    absent_teacher = models.ForeignKey(
+        "accounts.TeacherProfile",
+        on_delete=models.CASCADE,
+        related_name="absences_substituted",
+        help_text="The original teacher who is absent",
+    )
+    substitute_teacher = models.ForeignKey(
+        "accounts.TeacherProfile",
+        on_delete=models.CASCADE,
+        related_name="substitutions_assigned",
+        help_text="The assigned replacement teacher",
+    )
+    teacher_leave = models.ForeignKey(
+        "academics.TeacherLeave",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="substitutions",
+        help_text="Associated approved leave request if applicable",
+    )
+    reason = models.TextField(
+        blank=True,
+        default="",
+        help_text="Reason for the substitution assignment",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.CONFIRMED,
+        help_text="Status of the substitution (PENDING, CONFIRMED, CANCELLED, DECLINED)",
+    )
+    assigned_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="assigned_substitutions",
+        help_text="Staff user who confirmed the substitution",
+    )
+    assigned_at = models.DateTimeField(
+        auto_now_add=True,
+        help_text="Timestamp when the substitution was confirmed",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-assigned_at", "-created_at"]
+        verbose_name = "Teacher Substitution"
+        verbose_name_plural = "Teacher Substitutions"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["timetable_slot"],
+                condition=models.Q(status="CONFIRMED"),
+                name="unique_active_substitution_per_slot",
+            ),
+        ]
+
+    def __str__(self):
+        return (
+            f"Sub: {self.substitute_teacher.employee_code} for "
+            f"{self.absent_teacher.employee_code} on Slot {self.timetable_slot_id} [{self.status}]"
+        )
+
+
+class Notification(models.Model):
+    """
+    Represents an internal system notification for a user (e.g. substitute assignments, confirmations, declines).
+    """
+
+    class NotificationType(models.TextChoices):
+        SUBSTITUTION_ASSIGNED = "SUBSTITUTION_ASSIGNED", "Substitution Assigned"
+        SUBSTITUTION_ACCEPTED = "SUBSTITUTION_ACCEPTED", "Substitution Accepted"
+        SUBSTITUTION_DECLINED = "SUBSTITUTION_DECLINED", "Substitution Declined"
+        GENERAL = "GENERAL", "General"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    recipient = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.CASCADE,
+        related_name="notifications",
+        help_text="User who receives the notification",
+    )
+    notification_type = models.CharField(
+        max_length=35,
+        choices=NotificationType.choices,
+        default=NotificationType.GENERAL,
+        help_text="Type of notification",
+    )
+    title = models.CharField(
+        max_length=255,
+        help_text="Notification headline/title",
+    )
+    message = models.TextField(
+        help_text="Notification message body",
+    )
+    related_substitution = models.ForeignKey(
+        "academics.TeacherSubstitution",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="notifications",
+        help_text="Associated substitution if applicable",
+    )
+    is_read = models.BooleanField(
+        default=False,
+        help_text="Whether notification has been read",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="Timestamp when notification was marked as read",
+    )
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Notification"
+        verbose_name_plural = "Notifications"
+
+    def __str__(self):
+        return f"Notification to {self.recipient.username}: {self.title} [{'READ' if self.is_read else 'UNREAD'}]"
+
+    def mark_as_read(self):
+        self.is_read = True
+        self.read_at = timezone.now()
+        self.save(update_fields=["is_read", "read_at"])
+
 
 

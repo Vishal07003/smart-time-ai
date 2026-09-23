@@ -1,3 +1,4 @@
+from django.core.exceptions import PermissionDenied as DjangoPermissionDenied, ValidationError as DjangoValidationError
 from django.db import transaction
 from django.db.models import Q
 from django.utils import timezone
@@ -16,6 +17,7 @@ from .models import (
     Department,
     Division,
     Laboratory,
+    Notification,
     PracticalBatch,
     Program,
     Semester,
@@ -23,6 +25,7 @@ from .models import (
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
+    TeacherSubstitution,
     Timetable,
     TimetableConflict,
     TimetableSlot,
@@ -40,6 +43,7 @@ from .serializers import (
     DepartmentSerializer,
     DivisionSerializer,
     LaboratorySerializer,
+    NotificationSerializer,
     PracticalBatchSerializer,
     ProgramSerializer,
     SemesterSerializer,
@@ -47,6 +51,8 @@ from .serializers import (
     TeacherAvailabilitySerializer,
     TeacherLeaveSerializer,
     TeacherSubjectSerializer,
+    TeacherSubstitutionCreateSerializer,
+    TeacherSubstitutionSerializer,
     TimetableConflictSerializer,
     TimetableGenerateRequestSerializer,
     TimetableSerializer,
@@ -55,6 +61,7 @@ from .serializers import (
 from .services.conflict_detection import ConflictDetectionService
 from .services.constraint_parser import ConstraintParserService, ParsingContext
 from .services.constraint_validator import ConstraintValidatorService
+from .services.substitute_service import SubstituteSuggestionService
 from .services.timetable_generator import TimetableGenerationService
 
 
@@ -968,5 +975,209 @@ class ConstraintGenerateTimetableView(APIView):
         if result.get("status") in ("FEASIBLE", "OPTIMAL"):
             return Response(result, status=status.HTTP_201_CREATED)
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+
+class SubstituteSuggestionsView(APIView):
+    """
+    GET /api/v1/substitutions/suggestions/?teacher_leave=<UUID>
+    Staff-only endpoint to find affected published slots and suggest qualified,
+    available substitute teacher candidates.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def get(self, request, *args, **kwargs):
+        leave_id = request.query_params.get("teacher_leave")
+        if not leave_id:
+            return Response(
+                {"error": "Query parameter 'teacher_leave' is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            leave = TeacherLeave.objects.select_related(
+                "teacher", "teacher__user"
+            ).get(id=leave_id)
+        except (TeacherLeave.DoesNotExist, ValueError):
+            return Response(
+                {"error": f"Teacher leave with ID '{leave_id}' was not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        if leave.status != TeacherLeave.Status.APPROVED:
+            return Response(
+                {"error": "Teacher leave must be in APPROVED status to view substitute suggestions."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        suggestions = SubstituteSuggestionService.get_suggestions_for_leave(leave)
+        return Response(suggestions, status=status.HTTP_200_OK)
+
+
+class TeacherSubstitutionViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet for Teacher Substitutions.
+    - Staff: Full access to list and confirm substitutions.
+    - Teacher/Student: Denied.
+    """
+
+    queryset = (
+        TeacherSubstitution.objects.select_related(
+            "timetable_slot",
+            "timetable_slot__subject",
+            "timetable_slot__division",
+            "absent_teacher",
+            "absent_teacher__user",
+            "substitute_teacher",
+            "substitute_teacher__user",
+            "assigned_by",
+        )
+        .all()
+    )
+    serializer_class = TeacherSubstitutionSerializer
+    permission_classes = [IsAuthenticated, IsStaffRole]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = [
+        "absent_teacher__employee_code",
+        "absent_teacher__user__first_name",
+        "substitute_teacher__employee_code",
+        "substitute_teacher__user__first_name",
+        "reason",
+        "status",
+    ]
+    ordering_fields = ["assigned_at", "created_at", "status"]
+    ordering = ["-assigned_at"]
+
+    def get_permissions(self):
+        if self.action in ["accept", "decline"]:
+            return [IsAuthenticated()]
+        return [IsAuthenticated(), IsStaffRole()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = TeacherSubstitutionCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        slot = serializer.validated_data["timetable_slot"]
+        substitute_teacher = serializer.validated_data["substitute_teacher"]
+        teacher_leave = serializer.validated_data.get("teacher_leave")
+        reason = serializer.validated_data.get("reason", "")
+
+        try:
+            substitution = SubstituteSuggestionService.confirm_substitution(
+                slot_id=slot.id,
+                substitute_teacher_id=substitute_teacher.id,
+                reason=reason,
+                assigned_by=request.user,
+                teacher_leave_id=teacher_leave.id if teacher_leave else None,
+            )
+        except (ValidationError, DjangoValidationError) as e:
+            if hasattr(e, "message_dict"):
+                return Response(e.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "detail"):
+                return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "messages"):
+                return Response({"detail": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        response_serializer = TeacherSubstitutionSerializer(substitution)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=["post"], url_path="accept")
+    def accept(self, request, pk=None):
+        """
+        Action for the assigned substitute teacher to accept a substitution assignment.
+        """
+        try:
+            substitution = SubstituteSuggestionService.accept_substitution(
+                substitution_id=pk,
+                user=request.user,
+            )
+        except DjangoPermissionDenied as e:
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except (ValidationError, DjangoValidationError) as e:
+            if hasattr(e, "message_dict"):
+                return Response(e.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "detail"):
+                return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "messages"):
+                return Response({"detail": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = TeacherSubstitutionSerializer(substitution)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="decline")
+    def decline(self, request, pk=None):
+        """
+        Action for the assigned substitute teacher to decline a substitution assignment.
+        """
+        try:
+            substitution = SubstituteSuggestionService.decline_substitution(
+                substitution_id=pk,
+                user=request.user,
+            )
+        except DjangoPermissionDenied as e:
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+        except (ValidationError, DjangoValidationError) as e:
+            if hasattr(e, "message_dict"):
+                return Response(e.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "detail"):
+                return Response(e.detail, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "messages"):
+                return Response({"detail": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = TeacherSubstitutionSerializer(substitution)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    API endpoint for viewing and managing user notifications.
+    Authenticated users can only access their own notifications.
+    """
+
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [SearchFilter, OrderingFilter]
+    search_fields = ["title", "message", "notification_type"]
+    ordering_fields = ["created_at", "read_at", "is_read"]
+    ordering = ["-created_at"]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return Notification.objects.none()
+        qs = Notification.objects.filter(recipient=user).select_related("related_substitution")
+        is_read_param = self.request.query_params.get("is_read")
+        if is_read_param is not None:
+            if is_read_param.lower() in ["true", "1"]:
+                qs = qs.filter(is_read=True)
+            elif is_read_param.lower() in ["false", "0"]:
+                qs = qs.filter(is_read=False)
+        return qs
+
+    @action(detail=True, methods=["patch", "post"], url_path="read")
+    def mark_read(self, request, pk=None):
+        """
+        Marks a specific notification as read.
+        Only the owner (recipient) can mark it read.
+        """
+        try:
+            notification = Notification.objects.get(pk=pk)
+        except (Notification.DoesNotExist, ValueError):
+            return Response({"detail": "Notification not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if notification.recipient != request.user:
+            return Response(
+                {"detail": "You do not have permission to mark this notification as read."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        notification.mark_as_read()
+        serializer = self.get_serializer(notification)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+
 
 
