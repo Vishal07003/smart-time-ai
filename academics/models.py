@@ -1363,5 +1363,87 @@ class SlotReschedule(models.Model):
         return f"Reschedule for Slot {self.original_slot_id} to {self.new_day} {self.new_start_time}-{self.new_end_time} [{self.status}]"
 
 
+class TimetableChangeLog(models.Model):
+    """
+    Audit log record capturing history of timetable state changes, slot reschedules,
+    and substitute assignments. Immutable after creation.
+    """
+
+    class Action(models.TextChoices):
+        TIMETABLE_CREATED = "TIMETABLE_CREATED", "Timetable Created"
+        TIMETABLE_GENERATED = "TIMETABLE_GENERATED", "Timetable Generated"
+        TIMETABLE_PUBLISHED = "TIMETABLE_PUBLISHED", "Timetable Published"
+        TIMETABLE_ARCHIVED = "TIMETABLE_ARCHIVED", "Timetable Archived"
+        SLOT_CREATED = "SLOT_CREATED", "Slot Created"
+        SLOT_UPDATED = "SLOT_UPDATED", "Slot Updated"
+        SLOT_CANCELLED = "SLOT_CANCELLED", "Slot Cancelled"
+        SLOT_RESCHEDULED = "SLOT_RESCHEDULED", "Slot Rescheduled"
+        SUBSTITUTE_ASSIGNED = "SUBSTITUTE_ASSIGNED", "Substitute Assigned"
+        SUBSTITUTE_ACCEPTED = "SUBSTITUTE_ACCEPTED", "Substitute Accepted"
+        SUBSTITUTE_DECLINED = "SUBSTITUTE_DECLINED", "Substitute Declined"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    timetable = models.ForeignKey(
+        "academics.Timetable",
+        on_delete=models.CASCADE,
+        related_name="change_logs",
+        help_text="Timetable associated with this log entry",
+    )
+    timetable_slot = models.ForeignKey(
+        "academics.TimetableSlot",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="change_logs",
+        help_text="Timetable slot associated with this log entry (if applicable)",
+    )
+    action = models.CharField(
+        max_length=30,
+        choices=Action.choices,
+        help_text="Audit action type",
+    )
+    changed_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="timetable_change_logs",
+        help_text="User who performed this action",
+    )
+    reason = models.TextField(
+        blank=True,
+        null=True,
+        help_text="Reason or description for the change",
+    )
+    old_data = models.JSONField(
+        blank=True,
+        null=True,
+        help_text="Snapshot of previous data before change",
+    )
+    new_data = models.JSONField(
+        blank=True,
+        null=True,
+        help_text="Snapshot of new data after change",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Timetable Change Log"
+        verbose_name_plural = "Timetable Change Logs"
+
+    def __str__(self):
+        actor = self.changed_by.username if self.changed_by else "System"
+        return f"{self.action} on Timetable {self.timetable_id} by {actor} at {self.created_at}"
+
+    def save(self, *args, **kwargs):
+        if self.pk and TimetableChangeLog.objects.filter(pk=self.pk).exists():
+            raise ValidationError("TimetableChangeLog records are immutable and cannot be modified.")
+        super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        raise ValidationError("TimetableChangeLog records are immutable and cannot be deleted.")
+
+
 
 

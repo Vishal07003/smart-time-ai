@@ -17,6 +17,7 @@ from .models import (
     TeacherSubject,
     TeacherSubstitution,
     Timetable,
+    TimetableChangeLog,
     TimetableConflict,
     TimetableSlot,
 )
@@ -1311,6 +1312,49 @@ class SlotRescheduleSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         ]
+
+
+class TimetableChangeLogSerializer(serializers.ModelSerializer):
+    """
+    Read-only serializer for TimetableChangeLog audit records.
+    """
+
+    changed_by = serializers.SerializerMethodField()
+    timetable = serializers.PrimaryKeyRelatedField(read_only=True)
+    timetable_slot = serializers.PrimaryKeyRelatedField(read_only=True)
+
+    class Meta:
+        model = TimetableChangeLog
+        fields = [
+            "id",
+            "action",
+            "timetable",
+            "timetable_slot",
+            "changed_by",
+            "reason",
+            "old_data",
+            "new_data",
+            "created_at",
+        ]
+        read_only_fields = [
+            "id",
+            "action",
+            "timetable",
+            "timetable_slot",
+            "changed_by",
+            "reason",
+            "old_data",
+            "new_data",
+            "created_at",
+        ]
+
+    def get_changed_by(self, obj):
+        if not obj.changed_by:
+            return None
+        return {
+            "id": str(obj.changed_by.id),
+            "name": obj.changed_by.get_full_name() or obj.changed_by.username,
+        }
 
 
 

@@ -24,6 +24,7 @@ from academics.models import (
     TeacherSubject,
     TeacherSubstitution,
     Timetable,
+    TimetableChangeLog,
     TimetableConflict,
     TimetableSlot,
 )
@@ -5411,6 +5412,415 @@ class ReschedulingSuggestionWorkflowTests(APITestCase):
         res_sug = self.client.get(f"/api/v1/substitutions/suggestions/?teacher_leave={leave.id}")
         self.assertEqual(res_sug.status_code, status.HTTP_200_OK)
         self.assertEqual(res_sug.data["teacher"]["id"], str(self.teacher_amit.id))
+
+
+class TimetableHistoryWorkflowTests(APITestCase):
+    """
+    Focused Phase 11 Test Suite: Timetable History & Change Tracking.
+    Verifies immutable audit logging across generation, publishing, archiving,
+    rescheduling, substitution workflows, and Staff-only read-only history API.
+    """
+
+    def setUp(self):
+        # 1. Create Users
+        self.staff_user = User.objects.create_user(
+            username="history_staff_user",
+            email="history_staff@example.com",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_amit_user = User.objects.create_user(
+            username="amit_history_teacher",
+            email="amit_history@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=User.Role.TEACHER,
+        )
+        self.teacher_suresh_user = User.objects.create_user(
+            username="suresh_history_teacher",
+            email="suresh_history@example.com",
+            password="Password123!",
+            first_name="Suresh",
+            last_name="Raina",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = User.objects.create_user(
+            username="history_student_user",
+            email="history_student@example.com",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        # 2. Academic Entities
+        self.department = Department.objects.create(
+            name="History Computer Science Dept",
+            code="CS_HIST_11",
+        )
+        self.program = Program.objects.create(
+            department=self.department,
+            name="B.Tech History CS",
+            code="BTCS_HIST_11",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=7,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(
+            semester=self.semester,
+            name="Division A",
+            capacity=60,
+        )
+
+        # 3. Teacher Profiles
+        self.teacher_amit = TeacherProfile.objects.create(
+            user=self.teacher_amit_user,
+            department=self.department,
+            employee_code="T_HIST_01",
+            designation="Professor",
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_suresh = TeacherProfile.objects.create(
+            user=self.teacher_suresh_user,
+            department=self.department,
+            employee_code="T_HIST_02",
+            designation="Associate Professor",
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        # 4. Rooms
+        self.classroom_101 = Classroom.objects.create(
+            building="History Block",
+            room_number="101",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+
+        # 5. Subject & TeacherSubject Qualifications
+        self.subject_java = Subject.objects.create(
+            program=self.program,
+            name="Java Enterprise",
+            code="CS701_HIST",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        TeacherSubject.objects.create(teacher=self.teacher_amit, subject=self.subject_java, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_suresh, subject=self.subject_java, priority=2)
+
+        # 6. Published Timetable & Slots
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+        self.slot_monday = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom_101,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.history_url = "/api/v1/timetable-history/"
+
+    def test_01_timetable_generation_creates_history(self):
+        """1. Timetable generation creates TIMETABLE_GENERATED history."""
+        from academics.services.timetable_history_service import TimetableHistoryService
+        tt_gen = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=2,
+            status=Timetable.Status.GENERATED,
+            created_by=self.staff_user,
+        )
+        log = TimetableHistoryService.log_timetable_generated(tt_gen, changed_by=self.staff_user)
+        self.assertEqual(log.action, TimetableChangeLog.Action.TIMETABLE_GENERATED)
+        self.assertEqual(log.changed_by, self.staff_user)
+        self.assertEqual(log.timetable, tt_gen)
+        self.assertEqual(log.new_data["status"], "GENERATED")
+
+    def test_02_publish_creates_history(self):
+        """2. Publishing a timetable records TIMETABLE_PUBLISHED and archives older published versions."""
+        self.client.force_authenticate(user=self.staff_user)
+        new_tt = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=2,
+            status=Timetable.Status.GENERATED,
+            created_by=self.staff_user,
+        )
+        res = self.client.post(f"/api/v1/timetables/{new_tt.id}/publish/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        publish_log = TimetableChangeLog.objects.filter(
+            timetable=new_tt,
+            action=TimetableChangeLog.Action.TIMETABLE_PUBLISHED,
+        ).first()
+        self.assertIsNotNone(publish_log)
+        self.assertEqual(publish_log.changed_by, self.staff_user)
+
+        archive_log = TimetableChangeLog.objects.filter(
+            timetable=self.timetable,
+            action=TimetableChangeLog.Action.TIMETABLE_ARCHIVED,
+        ).first()
+        self.assertIsNotNone(archive_log)
+
+    def test_03_archive_creates_history(self):
+        """3. Archiving a timetable records TIMETABLE_ARCHIVED history."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.post(f"/api/v1/timetables/{self.timetable.id}/archive/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        archive_log = TimetableChangeLog.objects.filter(
+            timetable=self.timetable,
+            action=TimetableChangeLog.Action.TIMETABLE_ARCHIVED,
+        ).first()
+        self.assertIsNotNone(archive_log)
+        self.assertEqual(archive_log.changed_by, self.staff_user)
+
+    def test_04_reschedule_creates_correct_old_new_data(self):
+        """4. Reschedule creates correct old and new scheduling data snapshots."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday.id),
+            "teacher": str(self.teacher_suresh.id),
+            "day": "TUESDAY",
+            "start_time": "11:00",
+            "end_time": "12:00",
+            "classroom": str(self.classroom_101.id),
+            "reason": "Rescheduled for seminar",
+        }
+        res = self.client.post("/api/v1/rescheduling/confirm/", payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        resched_log = TimetableChangeLog.objects.filter(
+            action=TimetableChangeLog.Action.SLOT_RESCHEDULED,
+        ).first()
+        self.assertIsNotNone(resched_log)
+        self.assertEqual(resched_log.reason, "Rescheduled for seminar")
+        self.assertEqual(resched_log.old_data["day"], "MONDAY")
+        self.assertEqual(resched_log.old_data["start_time"], "10:00")
+        self.assertEqual(resched_log.old_data["teacher_id"], str(self.teacher_amit.id))
+        self.assertEqual(resched_log.new_data["day"], "TUESDAY")
+        self.assertEqual(resched_log.new_data["start_time"], "11:00")
+        self.assertEqual(resched_log.new_data["teacher_id"], str(self.teacher_suresh.id))
+
+    def test_05_substitute_assignment_creates_history(self):
+        """5. Assigning a substitute records SUBSTITUTE_ASSIGNED history."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+            "reason": "Medical Leave Substitute",
+        }
+        res = self.client.post("/api/v1/substitutions/", payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        sub_log = TimetableChangeLog.objects.filter(
+            action=TimetableChangeLog.Action.SUBSTITUTE_ASSIGNED,
+            timetable_slot=self.slot_monday,
+        ).first()
+        self.assertIsNotNone(sub_log)
+        self.assertEqual(sub_log.changed_by, self.staff_user)
+        self.assertEqual(sub_log.new_data["teacher_id"], str(self.teacher_suresh.id))
+
+    def test_06_substitute_acceptance_creates_history(self):
+        """6. Substitute acceptance records SUBSTITUTE_ACCEPTED with substitute teacher as actor."""
+        # Create substitution
+        sub = TeacherSubstitution.objects.create(
+            timetable_slot=self.slot_monday,
+            absent_teacher=self.teacher_amit,
+            substitute_teacher=self.teacher_suresh,
+            status=TeacherSubstitution.Status.PENDING,
+            assigned_by=self.staff_user,
+        )
+        self.client.force_authenticate(user=self.teacher_suresh_user)
+        res = self.client.post(f"/api/v1/substitutions/{sub.id}/accept/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        accept_log = TimetableChangeLog.objects.filter(
+            action=TimetableChangeLog.Action.SUBSTITUTE_ACCEPTED,
+            timetable_slot=self.slot_monday,
+        ).first()
+        self.assertIsNotNone(accept_log)
+        self.assertEqual(accept_log.changed_by, self.teacher_suresh_user)
+        self.assertEqual(accept_log.new_data["status"], "CONFIRMED")
+
+    def test_07_substitute_decline_creates_history(self):
+        """7. Substitute decline records SUBSTITUTE_DECLINED with substitute teacher as actor."""
+        sub = TeacherSubstitution.objects.create(
+            timetable_slot=self.slot_monday,
+            absent_teacher=self.teacher_amit,
+            substitute_teacher=self.teacher_suresh,
+            status=TeacherSubstitution.Status.PENDING,
+            assigned_by=self.staff_user,
+        )
+        self.client.force_authenticate(user=self.teacher_suresh_user)
+        res = self.client.post(f"/api/v1/substitutions/{sub.id}/decline/")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        decline_log = TimetableChangeLog.objects.filter(
+            action=TimetableChangeLog.Action.SUBSTITUTE_DECLINED,
+            timetable_slot=self.slot_monday,
+        ).first()
+        self.assertIsNotNone(decline_log)
+        self.assertEqual(decline_log.changed_by, self.teacher_suresh_user)
+        self.assertEqual(decline_log.new_data["status"], "DECLINED")
+
+    def test_08_history_identifies_changed_by_correctly(self):
+        """8. History accurately records the user responsible for each action."""
+        from academics.services.timetable_history_service import TimetableHistoryService
+        log = TimetableHistoryService.log_timetable_created(self.timetable, changed_by=self.staff_user)
+        self.assertEqual(log.changed_by_id, self.staff_user.id)
+
+    def test_09_history_records_are_immutable(self):
+        """9. History records are immutable and cannot be updated or deleted."""
+        from django.core.exceptions import ValidationError as DjangoValidationError
+        log = TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            action=TimetableChangeLog.Action.TIMETABLE_CREATED,
+            changed_by=self.staff_user,
+            reason="Initial Creation",
+        )
+        # Attempt update
+        log.reason = "Modified Reason"
+        with self.assertRaises(DjangoValidationError):
+            log.save()
+
+        # Attempt delete
+        with self.assertRaises(DjangoValidationError):
+            log.delete()
+
+    def test_10_staff_can_list_history(self):
+        """10. Staff can list timetable history records with correct response contract."""
+        TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            action=TimetableChangeLog.Action.TIMETABLE_PUBLISHED,
+            changed_by=self.staff_user,
+            reason="Published for semester",
+        )
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.history_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(len(res.data["results"] if "results" in res.data else res.data) >= 1)
+        item = (res.data["results"] if "results" in res.data else res.data)[0]
+        self.assertIn("id", item)
+        self.assertIn("action", item)
+        self.assertIn("timetable", item)
+        self.assertIn("changed_by", item)
+        self.assertEqual(item["changed_by"]["id"], str(self.staff_user.id))
+
+    def test_11_teacher_cannot_access_history(self):
+        """11. Teachers are forbidden from accessing timetable history (403)."""
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.history_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_12_student_cannot_access_history(self):
+        """12. Students and unauthenticated users cannot access timetable history."""
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.get(self.history_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.logout()
+        res_unauth = self.client.get(self.history_url)
+        self.assertEqual(res_unauth.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_13_filters_work_correctly(self):
+        """13. History endpoint correctly filters by timetable, slot, action, and changed_by."""
+        log1 = TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            timetable_slot=self.slot_monday,
+            action=TimetableChangeLog.Action.SLOT_RESCHEDULED,
+            changed_by=self.staff_user,
+            reason="Rescheduled",
+        )
+        tt_other = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=3,
+            status=Timetable.Status.GENERATED,
+            created_by=self.staff_user,
+        )
+        log2 = TimetableChangeLog.objects.create(
+            timetable=tt_other,
+            action=TimetableChangeLog.Action.TIMETABLE_GENERATED,
+            changed_by=self.staff_user,
+            reason="Generated",
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+
+        # Filter by timetable
+        res = self.client.get(f"{self.history_url}?timetable={self.timetable.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data["results"] if "results" in res.data else res.data
+        self.assertTrue(len(results) > 0)
+        self.assertTrue(all(str(r["timetable"]) == str(self.timetable.id) for r in results))
+
+        # Filter by action
+        res_action = self.client.get(f"{self.history_url}?action=SLOT_RESCHEDULED")
+        self.assertEqual(res_action.status_code, status.HTTP_200_OK)
+        results_action = res_action.data["results"] if "results" in res_action.data else res_action.data
+        self.assertTrue(len(results_action) > 0)
+        self.assertTrue(all(r["action"] == "SLOT_RESCHEDULED" for r in results_action))
+
+    def test_14_newest_history_appears_first(self):
+        """14. Timetable history is sorted chronologically descending (-created_at)."""
+        TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            action=TimetableChangeLog.Action.TIMETABLE_CREATED,
+            changed_by=self.staff_user,
+        )
+        TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            action=TimetableChangeLog.Action.TIMETABLE_PUBLISHED,
+            changed_by=self.staff_user,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.history_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data["results"] if "results" in res.data else res.data
+        timestamps = [r["created_at"] for r in results]
+        self.assertEqual(timestamps, sorted(timestamps, reverse=True))
+
+    def test_15_duplicate_operation_does_not_create_duplicate_history(self):
+        """15. Idempotent / repeated operations do not create redundant duplicate history entries."""
+        from academics.services.timetable_history_service import TimetableHistoryService
+        count_before = TimetableChangeLog.objects.count()
+        TimetableHistoryService.log_timetable_created(self.timetable, changed_by=self.staff_user)
+        TimetableHistoryService.log_timetable_created(self.timetable, changed_by=self.staff_user)
+        count_after = TimetableChangeLog.objects.count()
+        self.assertEqual(count_after, count_before + 1)
+
+    def test_16_published_timetable_remains_unchanged(self):
+        """16. Auditing workflows and log retrieval do not modify published timetable status."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.history_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.timetable.refresh_from_db()
+        self.assertEqual(self.timetable.status, Timetable.Status.PUBLISHED)
+        self.assertEqual(self.timetable.version, 1)
+
+    def test_17_existing_phase_1_to_10c_compatibility(self):
+        """17. Rescheduling and substitute workflows remain fully functional with audit logging."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"/api/v1/rescheduling/suggestions/?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(len(res.data["suggestions"]) > 0)
 
 
 

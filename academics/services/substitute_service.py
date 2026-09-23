@@ -391,6 +391,14 @@ class SubstituteSuggestionService:
             related_substitution=substitution,
         )
 
+        # Phase 11: Log substitute assigned history
+        from academics.services.timetable_history_service import TimetableHistoryService
+        TimetableHistoryService.log_substitute_assigned(
+            substitution=substitution,
+            changed_by=assigned_by,
+            reason=reason,
+        )
+
         return substitution
 
     @classmethod
@@ -480,6 +488,13 @@ class SubstituteSuggestionService:
         substitution.status = TeacherSubstitution.Status.CONFIRMED
         substitution.save(update_fields=["status", "updated_at"])
 
+        # Phase 11: Log substitute accepted history
+        from academics.services.timetable_history_service import TimetableHistoryService
+        TimetableHistoryService.log_substitute_accepted(
+            substitution=substitution,
+            user=user,
+        )
+
         # Notify assigning staff member
         if substitution.assigned_by and substitution.assigned_by != user:
             start_str = slot.start_time.strftime("%H:%M") if hasattr(slot.start_time, "strftime") else str(slot.start_time)[:5]
@@ -534,6 +549,13 @@ class SubstituteSuggestionService:
         # Update status
         substitution.status = TeacherSubstitution.Status.DECLINED
         substitution.save(update_fields=["status", "updated_at"])
+
+        # Phase 11: Log substitute declined history
+        from academics.services.timetable_history_service import TimetableHistoryService
+        TimetableHistoryService.log_substitute_declined(
+            substitution=substitution,
+            user=user,
+        )
 
         # Notify assigning staff member
         if substitution.assigned_by and substitution.assigned_by != user:

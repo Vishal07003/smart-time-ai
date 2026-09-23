@@ -311,6 +311,10 @@ class TimetableGenerationService:
             if slots_to_create:
                 TimetableSlot.objects.bulk_create(slots_to_create)
 
+            # Phase 11: Log history
+            from academics.services.timetable_history_service import TimetableHistoryService
+            TimetableHistoryService.log_timetable_generated(timetable, changed_by=self.created_by)
+
             # Run Phase 5 conflict detection
             conflict_service = ConflictDetectionService(timetable)
             detected_conflicts = conflict_service.detect_conflicts()
