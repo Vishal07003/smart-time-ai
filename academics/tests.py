@@ -6555,6 +6555,584 @@ class TeacherDashboardWorkflowTests(APITestCase):
         self.assertNotIn("Suresh Confidential Notice", notif_titles)
 
 
+class StudentDashboardWorkflowTests(APITestCase):
+    """
+    Focused Phase 14 Test Suite: Student Dashboard APIs.
+    Verifies personalized schedule classification (today & weekly) with strict division and batch filtering,
+    rescheduled classes, student-isolated notifications, relevant change history, and role-based permissions.
+    """
+
+    def setUp(self):
+        from accounts.models import StudentProfile, TeacherProfile, User
+        self.User = User
+        self.TeacherProfile = TeacherProfile
+        self.StudentProfile = StudentProfile
+
+        # 1. Users
+        self.staff_user = User.objects.create_user(
+            username="stu_dash_staff",
+            email="sdash_staff@example.com",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_user = User.objects.create_user(
+            username="stu_dash_teacher",
+            email="sdash_teacher@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=User.Role.TEACHER,
+        )
+        self.student_user_a = User.objects.create_user(
+            username="stu_dash_student_a",
+            email="sdash_student_a@example.com",
+            password="Password123!",
+            first_name="Rohan",
+            last_name="Sharma",
+            role=User.Role.STUDENT,
+        )
+        self.student_user_b = User.objects.create_user(
+            username="stu_dash_student_b",
+            email="sdash_student_b@example.com",
+            password="Password123!",
+            first_name="Priya",
+            last_name="Singh",
+            role=User.Role.STUDENT,
+        )
+        self.student_user_no_batch = User.objects.create_user(
+            username="stu_dash_student_nobatch",
+            email="sdash_student_nobatch@example.com",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+        self.student_user_div_b = User.objects.create_user(
+            username="stu_dash_student_divb",
+            email="sdash_student_divb@example.com",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        # 2. Academic Entities
+        self.department = Department.objects.create(
+            name="Student Dash Computer Science Dept",
+            code="CS_SDASH_14",
+        )
+        self.program = Program.objects.create(
+            department=self.department,
+            name="B.Tech Student Dash CS",
+            code="BTCS_SDASH_14",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=7,
+            academic_year="2026-2027",
+        )
+        self.division_a = Division.objects.create(
+            semester=self.semester,
+            name="Division A",
+            capacity=60,
+        )
+        self.division_b = Division.objects.create(
+            semester=self.semester,
+            name="Division B",
+            capacity=60,
+        )
+        self.batch_a = PracticalBatch.objects.create(
+            division=self.division_a,
+            name="Batch A1",
+            capacity=30,
+        )
+        self.batch_b = PracticalBatch.objects.create(
+            division=self.division_a,
+            name="Batch A2",
+            capacity=30,
+        )
+
+        # 3. Profiles
+        self.teacher_profile = TeacherProfile.objects.create(
+            user=self.teacher_user,
+            department=self.department,
+            employee_code="T_SDASH_01",
+            designation="Professor",
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.student_profile_a = StudentProfile.objects.create(
+            user=self.student_user_a,
+            student_code="STU_SDASH_01",
+            roll_number="1",
+            division=self.division_a,
+            batch=self.batch_a,
+            admission_year=2024,
+            status=StudentProfile.Status.ACTIVE,
+        )
+        self.student_profile_b = StudentProfile.objects.create(
+            user=self.student_user_b,
+            student_code="STU_SDASH_02",
+            roll_number="2",
+            division=self.division_a,
+            batch=self.batch_b,
+            admission_year=2024,
+            status=StudentProfile.Status.ACTIVE,
+        )
+        self.student_profile_no_batch = StudentProfile.objects.create(
+            user=self.student_user_no_batch,
+            student_code="STU_SDASH_03",
+            roll_number="3",
+            division=self.division_a,
+            batch=None,
+            admission_year=2024,
+            status=StudentProfile.Status.ACTIVE,
+        )
+        self.student_profile_div_b = StudentProfile.objects.create(
+            user=self.student_user_div_b,
+            student_code="STU_SDASH_04",
+            roll_number="4",
+            division=self.division_b,
+            batch=None,
+            admission_year=2024,
+            status=StudentProfile.Status.ACTIVE,
+        )
+
+        # 4. Rooms & Subjects
+        self.classroom_101 = Classroom.objects.create(
+            building="Student Dash Block",
+            room_number="101",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.lab_201 = Laboratory.objects.create(
+            building="Student Dash Block",
+            lab_number="201",
+            name="Computer Lab 1",
+            capacity=30,
+            status=Laboratory.Status.AVAILABLE,
+        )
+        self.subject_lecture = Subject.objects.create(
+            program=self.program,
+            name="Distributed Systems",
+            code="CS701_SDASH",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        self.subject_practical = Subject.objects.create(
+            program=self.program,
+            name="Cloud Computing Lab",
+            code="CS702_SDASH",
+            type=Subject.Type.PRACTICAL,
+            credits=Decimal("2.0"),
+            weekly_practicals=2,
+        )
+        TeacherSubject.objects.create(teacher=self.teacher_profile, subject=self.subject_lecture, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_profile, subject=self.subject_practical, priority=1)
+
+        # 5. Published Timetable & Slots
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+
+        # Wednesday Slots (2026-09-23 is Wednesday)
+        # Completed lecture for whole Division A (batch=None)
+        self.slot_div_a_completed = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_a,
+            batch=None,
+            subject=self.subject_lecture,
+            teacher=self.teacher_profile,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="09:00:00",
+            end_time="10:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        # Current practical for Batch A only (10:00 - 11:00)
+        self.slot_batch_a_current = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_a,
+            batch=self.batch_a,
+            subject=self.subject_practical,
+            teacher=self.teacher_profile,
+            laboratory=self.lab_201,
+            day="WEDNESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.PRACTICAL,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        # Current practical for Batch B only (10:00 - 11:00)
+        self.slot_batch_b_current = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_a,
+            batch=self.batch_b,
+            subject=self.subject_practical,
+            teacher=self.teacher_profile,
+            laboratory=self.lab_201,
+            day="WEDNESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.PRACTICAL,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        # Upcoming lecture for whole Division A (11:00 - 12:00)
+        self.slot_div_a_upcoming = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_a,
+            batch=None,
+            subject=self.subject_lecture,
+            teacher=self.teacher_profile,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="11:00:00",
+            end_time="12:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        # Rescheduled slot for Division A
+        self.slot_div_a_rescheduled = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_a,
+            batch=None,
+            subject=self.subject_lecture,
+            teacher=self.teacher_profile,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="14:00:00",
+            end_time="15:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.RESCHEDULED,
+        )
+        # Division B slot (must never appear in Division A student's payload)
+        self.slot_div_b = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_b,
+            batch=None,
+            subject=self.subject_lecture,
+            teacher=self.teacher_profile,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        # Thursday Slot for weekly timetable ordering
+        self.slot_div_a_thursday = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_a,
+            batch=None,
+            subject=self.subject_lecture,
+            teacher=self.teacher_profile,
+            classroom=self.classroom_101,
+            day="THURSDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.student_dashboard_url = "/api/v1/student/dashboard/"
+
+    def test_01_student_can_access_dashboard(self):
+        """1. Student can access the student dashboard endpoint (200 OK) with complete response structure."""
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        expected_keys = [
+            "summary",
+            "today",
+            "weekly_timetable",
+            "rescheduled_classes",
+            "notifications",
+            "recent_changes",
+        ]
+        for k in expected_keys:
+            self.assertIn(k, res.data)
+
+    def test_02_staff_forbidden_from_student_dashboard(self):
+        """2. Staff role users are forbidden (403) from accessing student dashboard."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_03_teacher_forbidden_from_student_dashboard(self):
+        """3. Teacher role users are forbidden (403) from accessing student dashboard."""
+        self.client.force_authenticate(user=self.teacher_user)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_04_unauthenticated_unauthorized(self):
+        """4. Unauthenticated users receive 401 Unauthorized."""
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_05_only_students_division_timetable_returned(self):
+        """5. Only timetable slots matching student's assigned division are returned (no Division B)."""
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        today_classes = res.data["today"]["classes"]
+        today_ids = [c["id"] for c in today_classes]
+
+        self.assertIn(str(self.slot_div_a_completed.id), today_ids)
+        self.assertNotIn(str(self.slot_div_b.id), today_ids)
+
+        weekly_ids = [s["id"] for s in res.data["weekly_timetable"]]
+        self.assertIn(str(self.slot_div_a_thursday.id), weekly_ids)
+        self.assertNotIn(str(self.slot_div_b.id), weekly_ids)
+
+    def test_06_batch_filtering_works_correctly(self):
+        """6. Student in Batch A sees Batch A slots and NOT Batch B practical slots."""
+        # Authenticate as Batch A student
+        self.client.force_authenticate(user=self.student_user_a)
+        res_a = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res_a.status_code, status.HTTP_200_OK)
+
+        today_ids_a = [c["id"] for c in res_a.data["today"]["classes"]]
+        self.assertIn(str(self.slot_batch_a_current.id), today_ids_a)
+        self.assertNotIn(str(self.slot_batch_b_current.id), today_ids_a)
+
+        # Authenticate as Batch B student
+        self.client.force_authenticate(user=self.student_user_b)
+        res_b = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res_b.status_code, status.HTTP_200_OK)
+
+        today_ids_b = [c["id"] for c in res_b.data["today"]["classes"]]
+        self.assertIn(str(self.slot_batch_b_current.id), today_ids_b)
+        self.assertNotIn(str(self.slot_batch_a_current.id), today_ids_b)
+
+    def test_07_division_wide_classes_are_included(self):
+        """7. Division-wide lectures (batch=None) are included for students both with and without batches."""
+        # Student with Batch A
+        self.client.force_authenticate(user=self.student_user_a)
+        res_a = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res_a.status_code, status.HTTP_200_OK)
+        today_ids_a = [c["id"] for c in res_a.data["today"]["classes"]]
+        self.assertIn(str(self.slot_div_a_completed.id), today_ids_a)
+        self.assertIn(str(self.slot_div_a_upcoming.id), today_ids_a)
+
+        # Student with NO batch
+        self.client.force_authenticate(user=self.student_user_no_batch)
+        res_nb = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res_nb.status_code, status.HTTP_200_OK)
+        today_ids_nb = [c["id"] for c in res_nb.data["today"]["classes"]]
+        self.assertIn(str(self.slot_div_a_completed.id), today_ids_nb)
+        self.assertIn(str(self.slot_div_a_upcoming.id), today_ids_nb)
+        # Must NOT see any batch-specific practicals
+        self.assertNotIn(str(self.slot_batch_a_current.id), today_ids_nb)
+        self.assertNotIn(str(self.slot_batch_b_current.id), today_ids_nb)
+
+    def test_08_today_current_upcoming_completed_classification(self):
+        """8. Classes for today are accurately categorized into completed, current, and upcoming."""
+        from datetime import datetime
+        from academics.services.student_dashboard_service import StudentDashboardService
+
+        # Reference time: Wednesday at 10:30 (during slot_batch_a_current 10:00-11:00)
+        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        data = StudentDashboardService.get_dashboard_data(user=self.student_user_a, reference_datetime=ref_dt)
+
+        today = data["today"]
+        self.assertEqual(today["day"], "WEDNESDAY")
+
+        completed_ids = [c["id"] for c in today["completed"]]
+        current_ids = [c["id"] for c in today["current"]]
+        upcoming_ids = [c["id"] for c in today["upcoming"]]
+
+        self.assertIn(str(self.slot_div_a_completed.id), completed_ids)
+        self.assertIn(str(self.slot_batch_a_current.id), current_ids)
+        self.assertIn(str(self.slot_div_a_upcoming.id), upcoming_ids)
+
+    def test_09_weekly_timetable_contains_only_student_classes_sorted(self):
+        """9. Weekly timetable contains strictly student's classes sorted by weekday -> start_time."""
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        weekly = res.data["weekly_timetable"]
+        weekly_ids = [s["id"] for s in weekly]
+        self.assertIn(str(self.slot_div_a_completed.id), weekly_ids)
+        self.assertIn(str(self.slot_batch_a_current.id), weekly_ids)
+        self.assertIn(str(self.slot_div_a_thursday.id), weekly_ids)
+        self.assertNotIn(str(self.slot_batch_b_current.id), weekly_ids)
+        self.assertNotIn(str(self.slot_div_b.id), weekly_ids)
+
+        # Check sorting: Wednesday slots must appear before Thursday slots
+        wed_index = next(i for i, s in enumerate(weekly) if s["id"] == str(self.slot_div_a_completed.id))
+        thu_index = next(i for i, s in enumerate(weekly) if s["id"] == str(self.slot_div_a_thursday.id))
+        self.assertLess(wed_index, thu_index)
+
+    def test_10_subject_and_teacher_information_returned(self):
+        """10. Subject and teacher information exposed correctly without leaking teacher phone/email."""
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        today_classes = res.data["today"]["classes"]
+        slot_data = next(c for c in today_classes if c["id"] == str(self.slot_div_a_completed.id))
+
+        self.assertEqual(slot_data["subject"]["name"], "Distributed Systems")
+        self.assertEqual(slot_data["subject"]["code"], "CS701_SDASH")
+        self.assertEqual(slot_data["teacher_name"], "Amit Patil")
+        self.assertEqual(slot_data["session_type"], TimetableSlot.SessionType.LECTURE)
+        # Ensure private fields are NOT in the slot dict
+        self.assertNotIn("email", slot_data)
+        self.assertNotIn("phone", slot_data)
+
+    def test_11_classroom_laboratory_information_returned_correctly(self):
+        """11. Classroom returned for lectures and Laboratory returned for practicals."""
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        today_classes = res.data["today"]["classes"]
+        lec_slot = next(c for c in today_classes if c["id"] == str(self.slot_div_a_completed.id))
+        prac_slot = next(c for c in today_classes if c["id"] == str(self.slot_batch_a_current.id))
+
+        self.assertIsNotNone(lec_slot["classroom"])
+        self.assertEqual(lec_slot["classroom"]["room_number"], "101")
+        self.assertIsNone(lec_slot["laboratory"])
+
+        self.assertIsNotNone(prac_slot["laboratory"])
+        self.assertEqual(prac_slot["laboratory"]["lab_number"], "201")
+        self.assertIsNone(prac_slot["classroom"])
+
+    def test_12_rescheduled_classes_returned(self):
+        """12. Rescheduled classes relevant to the student are returned in rescheduled_classes list."""
+        reschedule_rec = SlotReschedule.objects.create(
+            original_slot=self.slot_div_a_rescheduled,
+            new_teacher=self.teacher_profile,
+            new_classroom=self.classroom_101,
+            new_day="FRIDAY",
+            new_start_time="14:00:00",
+            new_end_time="15:00:00",
+            reason="Special guest lecture",
+            status=SlotReschedule.Status.CONFIRMED,
+            created_by=self.staff_user,
+        )
+
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        resched_list = res.data["rescheduled_classes"]
+        resched_ids = [r["id"] for r in resched_list]
+        self.assertIn(str(reschedule_rec.id), resched_ids)
+
+    def test_13_only_students_notifications_returned(self):
+        """13. Notification list strictly contains notifications addressed to authenticated student."""
+        n_a = Notification.objects.create(
+            recipient=self.student_user_a,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Notification for Student A",
+            message="Class timing updated",
+            is_read=False,
+        )
+        n_b = Notification.objects.create(
+            recipient=self.student_user_b,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Notification for Student B",
+            message="Private note for B",
+            is_read=False,
+        )
+
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        notif_items = res.data["notifications"]["items"]
+        item_ids = [n["id"] for n in notif_items]
+        self.assertIn(str(n_a.id), item_ids)
+        self.assertNotIn(str(n_b.id), item_ids)
+
+    def test_14_unread_notification_count_correct(self):
+        """14. Unread notification count accurately counts unread notifications for the student."""
+        Notification.objects.create(
+            recipient=self.student_user_a,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Unread 1",
+            message="Msg 1",
+            is_read=False,
+        )
+        Notification.objects.create(
+            recipient=self.student_user_a,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Read 1",
+            message="Msg 2",
+            is_read=True,
+        )
+
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        self.assertEqual(res.data["notifications"]["unread_count"], 1)
+
+    def test_15_relevant_timetable_history_returned(self):
+        """15. TimetableChangeLog entries relevant to the student's division are exposed."""
+        log = TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            timetable_slot=self.slot_div_a_completed,
+            action=TimetableChangeLog.Action.SLOT_RESCHEDULED,
+            changed_by=self.staff_user,
+            reason="Room change for Division A",
+            old_data={"division_id": str(self.division_a.id)},
+            new_data={"division_id": str(self.division_a.id)},
+        )
+
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        change_ids = [c["id"] for c in res.data["recent_changes"]]
+        self.assertIn(str(log.id), change_ids)
+
+    def test_16_summary_counts_correct(self):
+        """16. Summary metrics correctly report total, upcoming, completed, unread notifs, and rescheduled."""
+        from datetime import datetime
+        from academics.services.student_dashboard_service import StudentDashboardService
+
+        Notification.objects.create(
+            recipient=self.student_user_a,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Important Alert",
+            message="Alert",
+            is_read=False,
+        )
+
+        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        data = StudentDashboardService.get_dashboard_data(user=self.student_user_a, reference_datetime=ref_dt)
+
+        summary = data["summary"]
+        self.assertEqual(summary["today_classes_count"], 4)  # completed, batch_a_current, upcoming, rescheduled
+        self.assertIsNotNone(summary["current_class"])
+        self.assertEqual(summary["completed_classes_count"], 1)
+        self.assertEqual(summary["upcoming_classes_count"], 2)  # upcoming + rescheduled
+        self.assertEqual(summary["unread_notifications"], 1)
+        self.assertGreaterEqual(summary["today_rescheduled_classes_count"], 1)
+
+    def test_17_no_other_division_or_batch_data_leaks(self):
+        """17. Division B and Batch B data never leaks into Division A / Batch A student's payload."""
+        self.client.force_authenticate(user=self.student_user_a)
+        res = self.client.get(self.student_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Division B slot check
+        all_returned_slot_ids = [c["id"] for c in res.data["today"]["classes"]] + [
+            s["id"] for s in res.data["weekly_timetable"]
+        ]
+        self.assertNotIn(str(self.slot_div_b.id), all_returned_slot_ids)
+        self.assertNotIn(str(self.slot_batch_b_current.id), all_returned_slot_ids)
+
+
+
 
 
 

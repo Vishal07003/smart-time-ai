@@ -23,6 +23,7 @@ from .constraint_validator import (
 )
 from .rescheduling_service import ReschedulingSuggestionService
 from .staff_dashboard_service import StaffDashboardService
+from .student_dashboard_service import StudentDashboardService
 from .substitute_service import SubstituteSuggestionService
 from .teacher_dashboard_service import TeacherDashboardService
 from .timetable_generator import TimetableGenerationService
@@ -62,6 +63,7 @@ __all__ = [
     "TimetableHistoryService",
     "StaffDashboardService",
     "TeacherDashboardService",
+    "StudentDashboardService",
     "SolverConfig",
     "OptimizationConfig",
     "SchedulingSession",

@@ -11,7 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from accounts.models import TeacherProfile, User
-from accounts.permissions import IsStaffRole, IsTeacherRole
+from accounts.permissions import IsStaffRole, IsStudentRole, IsTeacherRole
 from .models import (
     Classroom,
     Department,
@@ -68,6 +68,7 @@ from .services.constraint_parser import ConstraintParserService, ParsingContext
 from .services.constraint_validator import ConstraintValidatorService
 from .services.rescheduling_service import ReschedulingSuggestionService
 from .services.staff_dashboard_service import StaffDashboardService
+from .services.student_dashboard_service import StudentDashboardService
 from .services.substitute_service import SubstituteSuggestionService
 from .services.teacher_dashboard_service import TeacherDashboardService
 from .services.timetable_generator import TimetableGenerationService
@@ -1358,6 +1359,29 @@ class TeacherDashboardView(APIView):
     def get(self, request, *args, **kwargs):
         try:
             dashboard_data = TeacherDashboardService.get_dashboard_data(user=request.user)
+            return Response(dashboard_data, status=status.HTTP_200_OK)
+        except DjangoValidationError as e:
+            if hasattr(e, "message_dict"):
+                return Response(e.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "messages"):
+                return Response({"detail": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class StudentDashboardView(APIView):
+    """
+    Student-only endpoint aggregating real-time personalized dashboard data:
+    today's schedule (current/upcoming/completed), weekly timetable for student's division & batch,
+    rescheduled classes, personal notifications, and relevant timetable change history.
+    """
+
+    permission_classes = [IsAuthenticated, IsStudentRole]
+
+    def get(self, request, *args, **kwargs):
+        try:
+            dashboard_data = StudentDashboardService.get_dashboard_data(user=request.user)
             return Response(dashboard_data, status=status.HTTP_200_OK)
         except DjangoValidationError as e:
             if hasattr(e, "message_dict"):
