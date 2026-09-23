@@ -22,6 +22,7 @@ from .constraint_validator import (
     ValidationResult,
 )
 from .rescheduling_service import ReschedulingSuggestionService
+from .staff_dashboard_service import StaffDashboardService
 from .substitute_service import SubstituteSuggestionService
 from .timetable_generator import TimetableGenerationService
 from .timetable_history_service import TimetableHistoryService
@@ -58,6 +59,7 @@ __all__ = [
     "TimetableSolver",
     "TimetableGenerationService",
     "TimetableHistoryService",
+    "StaffDashboardService",
     "SolverConfig",
     "OptimizationConfig",
     "SchedulingSession",
