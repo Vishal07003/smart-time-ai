@@ -7,9 +7,10 @@ from .models import (
     Laboratory,
     PracticalBatch,
     Program,
-    Semester,
-    Subject,
     Notification,
+    Semester,
+    SlotReschedule,
+    Subject,
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
@@ -353,5 +354,29 @@ class NotificationAdmin(admin.ModelAdmin):
     list_filter = ("notification_type", "is_read", "created_at")
     search_fields = ("recipient__username", "recipient__email", "title", "message")
     readonly_fields = ("id", "created_at", "read_at")
+
+
+@admin.register(SlotReschedule)
+class SlotRescheduleAdmin(admin.ModelAdmin):
+    list_display = (
+        "id",
+        "original_slot",
+        "new_teacher",
+        "new_day",
+        "new_start_time",
+        "new_end_time",
+        "status",
+        "created_by",
+        "created_at",
+    )
+    list_filter = ("status", "new_day", "created_at")
+    search_fields = (
+        "new_teacher__employee_code",
+        "new_teacher__user__first_name",
+        "new_teacher__user__last_name",
+        "reason",
+    )
+    readonly_fields = ("id", "created_at", "updated_at")
+
 
 

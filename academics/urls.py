@@ -11,6 +11,8 @@ from .views import (
     NotificationViewSet,
     PracticalBatchViewSet,
     ProgramViewSet,
+    ReschedulingConfirmView,
+    ReschedulingSuggestionsView,
     SemesterViewSet,
     SubjectViewSet,
     SubstituteSuggestionsView,
@@ -59,6 +61,16 @@ urlpatterns = [
         "substitutions/suggestions/",
         SubstituteSuggestionsView.as_view(),
         name="substitute-suggestions",
+    ),
+    path(
+        "rescheduling/suggestions/",
+        ReschedulingSuggestionsView.as_view(),
+        name="rescheduling-suggestions",
+    ),
+    path(
+        "rescheduling/confirm/",
+        ReschedulingConfirmView.as_view(),
+        name="rescheduling-confirm",
     ),
 ] + router.urls
 

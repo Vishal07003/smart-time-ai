@@ -21,6 +21,7 @@ from .constraint_validator import (
     ValidationErrorDetail,
     ValidationResult,
 )
+from .rescheduling_service import ReschedulingSuggestionService
 from .substitute_service import SubstituteSuggestionService
 from .timetable_generator import TimetableGenerationService
 from .timetable_solver import (
