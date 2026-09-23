@@ -18,6 +18,7 @@ from .views import (
     SubjectViewSet,
     SubstituteSuggestionsView,
     TeacherAvailabilityViewSet,
+    TeacherDashboardView,
     TeacherLeaveViewSet,
     TeacherSubjectViewSet,
     TeacherSubstitutionViewSet,
@@ -79,6 +80,11 @@ urlpatterns = [
         "staff/dashboard/",
         StaffDashboardView.as_view(),
         name="staff-dashboard",
+    ),
+    path(
+        "teacher/dashboard/",
+        TeacherDashboardView.as_view(),
+        name="teacher-dashboard",
     ),
 ] + router.urls
 
