@@ -10,6 +10,7 @@ from .models import (
     PracticalBatch,
     Program,
     Semester,
+    SlotReschedule,
     Subject,
     TeacherAvailability,
     TeacherLeave,
@@ -1230,6 +1231,87 @@ class NotificationSerializer(serializers.ModelSerializer):
             "created_at",
             "read_at",
         ]
+
+
+class RescheduleConfirmRequestSerializer(serializers.Serializer):
+    """
+    Request serializer for confirming a slot reschedule.
+    """
+
+    timetable_slot = serializers.PrimaryKeyRelatedField(
+        queryset=TimetableSlot.objects.all(),
+        required=True,
+        help_text="UUID of the TimetableSlot to reschedule",
+    )
+    teacher = serializers.PrimaryKeyRelatedField(
+        queryset=TeacherProfile.objects.all(),
+        required=True,
+        help_text="UUID of the newly assigned TeacherProfile",
+    )
+    day = serializers.ChoiceField(
+        choices=TimetableSlot.Day.choices,
+        required=True,
+        help_text="New day of the week",
+    )
+    start_time = serializers.CharField(
+        required=True,
+        help_text="New start time (e.g. '11:00' or '11:00:00')",
+    )
+    end_time = serializers.CharField(
+        required=True,
+        help_text="New end time (e.g. '12:00' or '12:00:00')",
+    )
+    classroom = serializers.PrimaryKeyRelatedField(
+        queryset=Classroom.objects.all(),
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="UUID of newly allocated Classroom",
+    )
+    laboratory = serializers.PrimaryKeyRelatedField(
+        queryset=Laboratory.objects.all(),
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="UUID of newly allocated Laboratory",
+    )
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text="Reason for rescheduling",
+    )
+
+
+class SlotRescheduleSerializer(serializers.ModelSerializer):
+    """
+    Serializer for SlotReschedule audit records.
+    """
+
+    class Meta:
+        model = SlotReschedule
+        fields = [
+            "id",
+            "original_slot",
+            "new_teacher",
+            "new_day",
+            "new_start_time",
+            "new_end_time",
+            "new_classroom",
+            "new_laboratory",
+            "new_timetable",
+            "reason",
+            "status",
+            "created_by",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "created_at",
+            "updated_at",
+        ]
+
 
 
 

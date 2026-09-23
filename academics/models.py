@@ -1272,4 +1272,96 @@ class Notification(models.Model):
         self.save(update_fields=["is_read", "read_at"])
 
 
+class SlotReschedule(models.Model):
+    """
+    Represents a proposed or confirmed rescheduling of an existing TimetableSlot.
+    Preserves original TimetableSlot historically while capturing the new slot parameters
+    and associating them with a newly generated timetable version draft.
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "PENDING", "Pending"
+        CONFIRMED = "CONFIRMED", "Confirmed"
+        CANCELLED = "CANCELLED", "Cancelled"
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    original_slot = models.ForeignKey(
+        "academics.TimetableSlot",
+        on_delete=models.CASCADE,
+        related_name="reschedules",
+        help_text="The original timetable slot being rescheduled",
+    )
+    new_teacher = models.ForeignKey(
+        "accounts.TeacherProfile",
+        on_delete=models.CASCADE,
+        related_name="rescheduled_slots",
+        help_text="The newly assigned teacher (can be same or different)",
+    )
+    new_day = models.CharField(
+        max_length=15,
+        choices=TimetableSlot.Day.choices,
+        help_text="New day of the week",
+    )
+    new_start_time = models.TimeField(
+        help_text="New slot start time",
+    )
+    new_end_time = models.TimeField(
+        help_text="New slot end time",
+    )
+    new_classroom = models.ForeignKey(
+        "academics.Classroom",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rescheduled_slots",
+        help_text="New classroom if applicable",
+    )
+    new_laboratory = models.ForeignKey(
+        "academics.Laboratory",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rescheduled_slots",
+        help_text="New laboratory if applicable",
+    )
+    new_timetable = models.ForeignKey(
+        "academics.Timetable",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="rescheduled_changes",
+        help_text="New draft timetable version created for this reschedule",
+    )
+    reason = models.TextField(
+        blank=True,
+        default="",
+        help_text="Reason for rescheduling",
+    )
+    status = models.CharField(
+        max_length=15,
+        choices=Status.choices,
+        default=Status.CONFIRMED,
+        help_text="Status of the reschedule (PENDING, CONFIRMED, CANCELLED)",
+    )
+    created_by = models.ForeignKey(
+        "accounts.User",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_reschedules",
+        help_text="Staff user who confirmed the reschedule",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+        verbose_name = "Slot Reschedule"
+        verbose_name_plural = "Slot Reschedules"
+
+    def __str__(self):
+        return f"Reschedule for Slot {self.original_slot_id} to {self.new_day} {self.new_start_time}-{self.new_end_time} [{self.status}]"
+
+
+
 

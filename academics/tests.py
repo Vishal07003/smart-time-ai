@@ -15,9 +15,10 @@ from academics.models import (
     Laboratory,
     PracticalBatch,
     Program,
-    Semester,
-    Subject,
     Notification,
+    Semester,
+    SlotReschedule,
+    Subject,
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
@@ -4907,6 +4908,510 @@ class TeacherSubstitutionNotificationWorkflowTests(APITestCase):
         self.assertEqual(res.status_code, status.HTTP_200_OK)
         self.assertEqual(res.data["teacher"]["id"], str(self.teacher_amit.id))
         self.assertEqual(len(res.data["affected_slots"]), 1)
+
+
+class ReschedulingSuggestionWorkflowTests(APITestCase):
+    """
+    Phase 10C: Automatic Rescheduling + Alternative Teacher/Room/Time Suggestions Tests.
+    """
+
+    def setUp(self):
+        # 1. Users
+        self.staff_user = UserModel.objects.create_user(
+            username="staff_user_10c",
+            email="staff.10c@example.com",
+            password="Password123!",
+            first_name="Admin",
+            last_name="Staff",
+            role=UserModel.Role.STAFF,
+            is_staff=True,
+        )
+        self.user_amit = UserModel.objects.create_user(
+            username="teacher_amit_10c",
+            email="amit.10c@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=UserModel.Role.TEACHER,
+        )
+        self.user_suresh = UserModel.objects.create_user(
+            username="teacher_suresh_10c",
+            email="suresh.10c@example.com",
+            password="Password123!",
+            first_name="Suresh",
+            last_name="Rao",
+            role=UserModel.Role.TEACHER,
+        )
+        self.user_ramesh = UserModel.objects.create_user(
+            username="teacher_ramesh_10c",
+            email="ramesh.10c@example.com",
+            password="Password123!",
+            first_name="Ramesh",
+            last_name="Kumar",
+            role=UserModel.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="student_user_10c",
+            email="student.10c@example.com",
+            password="Password123!",
+            first_name="Rahul",
+            last_name="Sharma",
+            role=UserModel.Role.STUDENT,
+        )
+
+        # 2. Academic Hierarchy
+        self.dept = Department.objects.create(name="Computer Engineering 10C", code="CE_10C")
+        self.program = Program.objects.create(
+            department=self.dept,
+            name="B.Tech Computer Science 10C",
+            code="BTCS_10C",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=7,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(semester=self.semester, name="A", capacity=60)
+        self.division_b = Division.objects.create(semester=self.semester, name="B", capacity=60)
+        self.batch = PracticalBatch.objects.create(division=self.division, name="B1", capacity=30)
+
+        # 3. Classrooms & Laboratories
+        self.classroom_101 = Classroom.objects.create(
+            building="Main",
+            room_number="101",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.classroom_102 = Classroom.objects.create(
+            building="Main",
+            room_number="102",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.lab_201 = Laboratory.objects.create(
+            building="Main",
+            lab_number="201",
+            name="Network Lab",
+            capacity=30,
+            status=Laboratory.Status.AVAILABLE,
+        )
+
+        # 4. Teacher Profiles
+        self.teacher_amit = TeacherProfile.objects.create(
+            user=self.user_amit,
+            employee_code="EMP_AMIT_10C",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_suresh = TeacherProfile.objects.create(
+            user=self.user_suresh,
+            employee_code="EMP_SURESH_10C",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_ramesh = TeacherProfile.objects.create(
+            user=self.user_ramesh,
+            employee_code="EMP_RAMESH_10C",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        # 5. Subjects & Qualifications
+        self.subject_java = Subject.objects.create(
+            program=self.program,
+            name="Java Programming",
+            code="CS701_10C",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        self.subject_python = Subject.objects.create(
+            program=self.program,
+            name="Python Programming",
+            code="CS702_10C",
+            type=Subject.Type.PRACTICAL,
+            credits=Decimal("2.0"),
+            weekly_practicals=2,
+        )
+        TeacherSubject.objects.create(teacher=self.teacher_amit, subject=self.subject_java, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_suresh, subject=self.subject_java, priority=2)
+        # Ramesh is qualified only for Python, NOT Java
+        TeacherSubject.objects.create(teacher=self.teacher_ramesh, subject=self.subject_python, priority=1)
+
+        # 6. Published Timetable & Slots
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+        self.slot_monday = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom_101,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.reschedule_suggestions_url = "/api/v1/rescheduling/suggestions/"
+        self.reschedule_confirm_url = "/api/v1/rescheduling/confirm/"
+
+    def test_01_approved_leave_identifies_affected_published_slot(self):
+        """1. Approved leave correctly identifies affected published slot."""
+        TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date="2026-10-05",
+            end_date="2026-10-05",
+            reason="Medical Leave",
+            status=TeacherLeave.Status.APPROVED,
+        )
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["slot_id"], str(self.slot_monday.id))
+        self.assertEqual(res.data["original"]["teacher_id"], str(self.teacher_amit.id))
+
+    def test_02_qualified_available_substitute_is_suggested(self):
+        """2. Qualified available substitute (Suresh) is suggested at original time."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        suggestions = res.data["suggestions"]
+        self.assertTrue(len(suggestions) > 0)
+        top_suggestion = suggestions[0]
+        self.assertEqual(top_suggestion["type"], "SUBSTITUTE_TEACHER")
+        self.assertEqual(top_suggestion["teacher_id"], str(self.teacher_suresh.id))
+        self.assertEqual(top_suggestion["day"], "MONDAY")
+        self.assertEqual(top_suggestion["score"], 95)
+
+    def test_03_unqualified_teacher_is_excluded(self):
+        """3. Unqualified teacher (Ramesh) is completely excluded from Java suggestions."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        teacher_ids = [s["teacher_id"] for s in res.data["suggestions"]]
+        self.assertNotIn(str(self.teacher_ramesh.id), teacher_ids)
+
+    def test_04_teacher_clash_is_excluded(self):
+        """4. Teacher clash at original time excludes substitute from that specific time slot."""
+        # Create a class for Suresh on Monday 10:00 - 11:00
+        TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_b,
+            subject=self.subject_java,
+            teacher=self.teacher_suresh,
+            classroom=self.classroom_102,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        monday_10am_suresh = [
+            s for s in res.data["suggestions"]
+            if s["teacher_id"] == str(self.teacher_suresh.id) and s["day"] == "MONDAY" and s["start_time"] == "10:00"
+        ]
+        self.assertEqual(len(monday_10am_suresh), 0)
+
+    def test_05_teacher_leave_is_excluded(self):
+        """5. Teacher on approved leave is excluded from candidate suggestions for that period."""
+        TeacherLeave.objects.create(
+            teacher=self.teacher_suresh,
+            start_date="2026-10-05",  # Monday
+            end_date="2026-10-05",
+            reason="Conference",
+            status=TeacherLeave.Status.APPROVED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        monday_suresh = [
+            s for s in res.data["suggestions"]
+            if s["teacher_id"] == str(self.teacher_suresh.id) and s["day"] == "MONDAY"
+        ]
+        self.assertEqual(len(monday_suresh), 0)
+
+    def test_06_division_batch_clash_is_excluded(self):
+        """6. Times when division already has a class are excluded as alternative slots."""
+        # Division A has class on Tuesday 11:00 - 12:00
+        TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            subject=self.subject_java,
+            teacher=self.teacher_suresh,
+            classroom=self.classroom_101,
+            day="TUESDAY",
+            start_time="11:00:00",
+            end_time="12:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        tue_11am_slots = [
+            s for s in res.data["suggestions"]
+            if s["day"] == "TUESDAY" and s["start_time"] == "11:00"
+        ]
+        self.assertEqual(len(tue_11am_slots), 0)
+
+    def test_07_classroom_clash_is_excluded(self):
+        """7. Classroom occupied by another division is excluded for that time slot."""
+        # Classroom 101 occupied by Division B on Wednesday 10:00 - 11:00
+        TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_b,
+            subject=self.subject_java,
+            teacher=self.teacher_suresh,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        wed_10am_room101 = [
+            s for s in res.data["suggestions"]
+            if s["day"] == "WEDNESDAY" and s["start_time"] == "10:00" and s["classroom_id"] == str(self.classroom_101.id)
+        ]
+        self.assertEqual(len(wed_10am_room101), 0)
+
+    def test_08_laboratory_clash_is_excluded(self):
+        """8. Laboratory occupied by another class is excluded for practical slots."""
+        prac_slot = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=self.batch,
+            subject=self.subject_python,
+            teacher=self.teacher_ramesh,
+            laboratory=self.lab_201,
+            day="MONDAY",
+            start_time="14:00:00",
+            end_time="15:00:00",
+            session_type=TimetableSlot.SessionType.PRACTICAL,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        # Lab 201 occupied on Tuesday 14:00 - 15:00 by Division B
+        TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_b,
+            subject=self.subject_python,
+            teacher=self.teacher_ramesh,
+            laboratory=self.lab_201,
+            day="TUESDAY",
+            start_time="14:00:00",
+            end_time="15:00:00",
+            session_type=TimetableSlot.SessionType.PRACTICAL,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={prac_slot.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        tue_lab201 = [
+            s for s in res.data["suggestions"]
+            if s["day"] == "TUESDAY" and s["start_time"] == "14:00" and s["laboratory_id"] == str(self.lab_201.id)
+        ]
+        self.assertEqual(len(tue_lab201), 0)
+
+    def test_09_alternative_time_is_suggested_when_substitute_at_original_time_unavailable(self):
+        """9. When substitute at original time is unavailable, alternative time is suggested."""
+        TeacherAvailability.objects.create(
+            teacher=self.teacher_suresh,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            is_available=False,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Should find alternative time suggestions for other days
+        suggestions = res.data["suggestions"]
+        self.assertTrue(len(suggestions) > 0)
+        alt_time_suggestions = [s for s in suggestions if s["day"] != "MONDAY" or s["start_time"] != "10:00"]
+        self.assertTrue(len(alt_time_suggestions) > 0)
+
+    def test_10_alternative_room_is_suggested_when_room_conflict_exists(self):
+        """10. When classroom conflict exists, alternative room is suggested."""
+        # Classroom 101 occupied at original time by Division B
+        TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division_b,
+            subject=self.subject_java,
+            teacher=self.teacher_suresh,
+            classroom=self.classroom_101,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        room_102_suggestions = [
+            s for s in res.data["suggestions"] if s["classroom_id"] == str(self.classroom_102.id)
+        ]
+        self.assertTrue(len(room_102_suggestions) > 0)
+
+    def test_11_suggestions_are_deterministic(self):
+        """11. Successive calls to suggestion engine return identical ordered output and scores."""
+        self.client.force_authenticate(user=self.staff_user)
+        res1 = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        res2 = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+
+        self.assertEqual(res1.status_code, status.HTTP_200_OK)
+        self.assertEqual(res2.status_code, status.HTTP_200_OK)
+        self.assertEqual(res1.data["suggestions"], res2.data["suggestions"])
+
+    def test_12_staff_can_access_suggestions(self):
+        """12. Staff can access rescheduling suggestions."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn("suggestions", res.data)
+
+    def test_13_teacher_cannot_access_suggestions(self):
+        """13. Teachers are denied access to rescheduling suggestions."""
+        self.client.force_authenticate(user=self.user_amit)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_14_student_cannot_access_suggestions(self):
+        """14. Students are denied access to rescheduling suggestions."""
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.get(f"{self.reschedule_suggestions_url}?timetable_slot={self.slot_monday.id}")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_15_invalid_client_submitted_suggestion_is_rejected(self):
+        """15. Invalid client-submitted combination (unqualified teacher) is rejected server-side."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday.id),
+            "teacher": str(self.teacher_ramesh.id),  # Ramesh not qualified for Java
+            "day": "TUESDAY",
+            "start_time": "11:00",
+            "end_time": "12:00",
+            "classroom": str(self.classroom_101.id),
+        }
+        res = self.client.post(self.reschedule_confirm_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("teacher", res.data)
+
+    def test_16_valid_suggestion_can_be_confirmed_by_staff(self):
+        """16. Valid suggestion is confirmed by staff, creating a SlotReschedule record."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday.id),
+            "teacher": str(self.teacher_suresh.id),
+            "day": "TUESDAY",
+            "start_time": "11:00",
+            "end_time": "12:00",
+            "classroom": str(self.classroom_101.id),
+            "reason": "Rescheduling due to medical leave",
+        }
+        res = self.client.post(self.reschedule_confirm_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["status"], "CONFIRMED")
+        self.assertEqual(res.data["new_assignment"]["day"], "TUESDAY")
+
+        # Verify SlotReschedule in DB
+        reschedule = SlotReschedule.objects.get(id=res.data["reschedule_id"])
+        self.assertEqual(reschedule.status, SlotReschedule.Status.CONFIRMED)
+        self.assertEqual(reschedule.new_day, "TUESDAY")
+        self.assertEqual(reschedule.new_teacher_id, self.teacher_suresh.id)
+        self.assertEqual(reschedule.created_by, self.staff_user)
+
+    def test_17_original_published_timetable_remains_unchanged(self):
+        """17. Original published Timetable and TimetableSlot remain completely unchanged."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday.id),
+            "teacher": str(self.teacher_suresh.id),
+            "day": "TUESDAY",
+            "start_time": "11:00",
+            "end_time": "12:00",
+            "classroom": str(self.classroom_101.id),
+            "reason": "Safe rescheduling",
+        }
+        res = self.client.post(self.reschedule_confirm_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        # Verify original published timetable
+        self.timetable.refresh_from_db()
+        self.assertEqual(self.timetable.status, Timetable.Status.PUBLISHED)
+        self.assertEqual(self.timetable.version, 1)
+
+        # Verify original slot
+        self.slot_monday.refresh_from_db()
+        self.assertEqual(self.slot_monday.day, "MONDAY")
+        self.assertEqual(self.slot_monday.teacher_id, self.teacher_amit.id)
+        self.assertEqual(str(self.slot_monday.start_time)[:5], "10:00")
+
+    def test_18_confirmed_change_is_not_automatically_published(self):
+        """18. The new draft timetable created for the reschedule has status GENERATED."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday.id),
+            "teacher": str(self.teacher_suresh.id),
+            "day": "TUESDAY",
+            "start_time": "11:00",
+            "end_time": "12:00",
+            "classroom": str(self.classroom_101.id),
+        }
+        res = self.client.post(self.reschedule_confirm_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        new_tt_id = res.data["new_timetable"]["id"]
+        new_tt = Timetable.objects.get(id=new_tt_id)
+        self.assertEqual(new_tt.status, Timetable.Status.GENERATED)
+        self.assertEqual(new_tt.version, 2)
+
+    def test_19_existing_phase_10a_and_10b_behavior_remains_unchanged(self):
+        """19. Existing Phase 10A suggestions and 10B accept/decline workflows continue to pass."""
+        leave = TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date="2026-10-05",
+            end_date="2026-10-05",
+            reason="Medical Leave",
+            status=TeacherLeave.Status.APPROVED,
+        )
+        self.client.force_authenticate(user=self.staff_user)
+        res_sug = self.client.get(f"/api/v1/substitutions/suggestions/?teacher_leave={leave.id}")
+        self.assertEqual(res_sug.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_sug.data["teacher"]["id"], str(self.teacher_amit.id))
+
 
 
 

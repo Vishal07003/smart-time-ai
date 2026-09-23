@@ -21,6 +21,7 @@ from .models import (
     PracticalBatch,
     Program,
     Semester,
+    SlotReschedule,
     Subject,
     TeacherAvailability,
     TeacherLeave,
@@ -46,7 +47,9 @@ from .serializers import (
     NotificationSerializer,
     PracticalBatchSerializer,
     ProgramSerializer,
+    RescheduleConfirmRequestSerializer,
     SemesterSerializer,
+    SlotRescheduleSerializer,
     SubjectSerializer,
     TeacherAvailabilitySerializer,
     TeacherLeaveSerializer,
@@ -61,6 +64,7 @@ from .serializers import (
 from .services.conflict_detection import ConflictDetectionService
 from .services.constraint_parser import ConstraintParserService, ParsingContext
 from .services.constraint_validator import ConstraintValidatorService
+from .services.rescheduling_service import ReschedulingSuggestionService
 from .services.substitute_service import SubstituteSuggestionService
 from .services.timetable_generator import TimetableGenerationService
 
@@ -1177,6 +1181,80 @@ class NotificationViewSet(viewsets.ReadOnlyModelViewSet):
         notification.mark_as_read()
         serializer = self.get_serializer(notification)
         return Response(serializer.data, status=status.HTTP_200_OK)
+
+
+class ReschedulingSuggestionsView(APIView):
+    """
+    Staff-only endpoint to generate deterministic rescheduling suggestions for an affected published TimetableSlot.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def get(self, request, *args, **kwargs):
+        slot_id = request.query_params.get("timetable_slot")
+        if not slot_id:
+            return Response(
+                {"timetable_slot": "Query parameter 'timetable_slot' is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            suggestions_data = ReschedulingSuggestionService.get_suggestions_for_slot(slot_id)
+            return Response(suggestions_data, status=status.HTTP_200_OK)
+        except DjangoValidationError as e:
+            if hasattr(e, "message_dict"):
+                return Response(e.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "messages"):
+                return Response({"detail": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class ReschedulingConfirmView(APIView):
+    """
+    Staff-only endpoint to confirm and persist a slot reschedule safely.
+    Re-validates all parameters server-side, creates a new draft timetable version (status: GENERATED),
+    and logs a SlotReschedule record without mutating the original published timetable.
+    """
+
+    permission_classes = [IsAuthenticated, IsStaffRole]
+
+    def post(self, request, *args, **kwargs):
+        serializer = RescheduleConfirmRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        slot = serializer.validated_data["timetable_slot"]
+        teacher = serializer.validated_data["teacher"]
+        day = serializer.validated_data["day"]
+        start_time = serializer.validated_data["start_time"]
+        end_time = serializer.validated_data["end_time"]
+        classroom = serializer.validated_data.get("classroom")
+        laboratory = serializer.validated_data.get("laboratory")
+        reason = serializer.validated_data.get("reason", "")
+
+        try:
+            result = ReschedulingSuggestionService.confirm_reschedule(
+                slot_id=slot.id,
+                teacher_id=teacher.id,
+                day=day,
+                start_time=start_time,
+                end_time=end_time,
+                classroom_id=classroom.id if classroom else None,
+                laboratory_id=laboratory.id if laboratory else None,
+                reason=reason,
+                user=request.user,
+            )
+            return Response(result, status=status.HTTP_201_CREATED)
+        except DjangoValidationError as e:
+            if hasattr(e, "message_dict"):
+                return Response(e.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "messages"):
+                return Response({"detail": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
 
 
 
