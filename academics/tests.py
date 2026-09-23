@@ -6162,6 +6162,399 @@ class StaffDashboardWorkflowTests(APITestCase):
         self.assertIn("recent_changes_count", qa)
 
 
+class TeacherDashboardWorkflowTests(APITestCase):
+    """
+    Focused Phase 13 Test Suite: Teacher Dashboard APIs.
+    Verifies personalized schedule classification (today & weekly), leave requests,
+    substitute classes, user-isolated notifications, and relevant change history.
+    """
+
+    def setUp(self):
+        from accounts.models import StudentProfile, TeacherProfile, User
+        self.User = User
+        self.TeacherProfile = TeacherProfile
+        self.StudentProfile = StudentProfile
+
+        # 1. Users
+        self.staff_user = User.objects.create_user(
+            username="teacher_dash_staff",
+            email="tdash_staff@example.com",
+            password="Password123!",
+            role=User.Role.STAFF,
+        )
+        self.teacher_amit_user = User.objects.create_user(
+            username="amit_tdash_teacher",
+            email="amit_tdash@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=User.Role.TEACHER,
+        )
+        self.teacher_suresh_user = User.objects.create_user(
+            username="suresh_tdash_teacher",
+            email="suresh_tdash@example.com",
+            password="Password123!",
+            first_name="Suresh",
+            last_name="Raina",
+            role=User.Role.TEACHER,
+        )
+        self.student_user = User.objects.create_user(
+            username="tdash_student_user",
+            email="tdash_student@example.com",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+
+        # 2. Academic Entities
+        self.department = Department.objects.create(
+            name="Teacher Dash Computer Science Dept",
+            code="CS_TDASH_13",
+        )
+        self.program = Program.objects.create(
+            department=self.department,
+            name="B.Tech Teacher Dash CS",
+            code="BTCS_TDASH_13",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=7,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(
+            semester=self.semester,
+            name="Division A",
+            capacity=60,
+        )
+
+        # 3. Profiles
+        self.teacher_amit = TeacherProfile.objects.create(
+            user=self.teacher_amit_user,
+            department=self.department,
+            employee_code="T_TDASH_01",
+            designation="Professor",
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_suresh = TeacherProfile.objects.create(
+            user=self.teacher_suresh_user,
+            department=self.department,
+            employee_code="T_TDASH_02",
+            designation="Associate Professor",
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        # 4. Rooms & Subjects
+        self.classroom_101 = Classroom.objects.create(
+            building="Teacher Dash Block",
+            room_number="101",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.subject_java = Subject.objects.create(
+            program=self.program,
+            name="Java Advanced Programming",
+            code="CS701_TDASH",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        TeacherSubject.objects.create(teacher=self.teacher_amit, subject=self.subject_java, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_suresh, subject=self.subject_java, priority=2)
+
+        # 5. Published Timetable & Slots
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+
+        # Wednesday Slots for testing time classifications (2026-09-23 is Wednesday)
+        self.slot_amit_completed = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="09:00:00",
+            end_time="10:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        self.slot_amit_current = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        self.slot_amit_upcoming = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="11:00:00",
+            end_time="12:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        # Suresh's slot (should NOT leak into Amit's dashboard)
+        self.slot_suresh_other = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_suresh,
+            classroom=self.classroom_101,
+            day="WEDNESDAY",
+            start_time="14:00:00",
+            end_time="15:00:00",
+            session_type=TimetableSlot.SessionType.LECTURE,
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.teacher_dashboard_url = "/api/v1/teacher/dashboard/"
+
+    def test_01_teacher_can_access_dashboard(self):
+        """1. Teacher can access the teacher dashboard endpoint (200 OK)."""
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        expected_keys = [
+            "summary",
+            "today",
+            "weekly_timetable",
+            "leave_requests",
+            "substitute_classes",
+            "notifications",
+            "recent_changes",
+        ]
+        for k in expected_keys:
+            self.assertIn(k, res.data)
+
+    def test_02_staff_forbidden_from_dashboard(self):
+        """2. Staff role users are forbidden (403) from accessing teacher dashboard."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_03_student_forbidden_and_unauthenticated_unauthorized(self):
+        """3. Student role users receive 403; unauthenticated users receive 401."""
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.logout()
+        res_unauth = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res_unauth.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_04_only_authenticated_teachers_classes_returned(self):
+        """4. Only the authenticated teacher's scheduled classes are returned."""
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        today_classes = res.data["today"]["classes"]
+        today_ids = [c["id"] for c in today_classes]
+        self.assertIn(str(self.slot_amit_completed.id), today_ids)
+        self.assertIn(str(self.slot_amit_current.id), today_ids)
+        self.assertIn(str(self.slot_amit_upcoming.id), today_ids)
+        # Suresh's slot must NOT be present
+        self.assertNotIn(str(self.slot_suresh_other.id), today_ids)
+
+    def test_05_today_current_upcoming_completed_classification(self):
+        """5. Today's classes for the teacher are properly categorized by reference time."""
+        from datetime import datetime
+        from academics.services.teacher_dashboard_service import TeacherDashboardService
+
+        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        data = TeacherDashboardService.get_dashboard_data(user=self.teacher_amit_user, reference_datetime=ref_dt)
+
+        completed_ids = [c["id"] for c in data["today"]["completed"]]
+        current_ids = [c["id"] for c in data["today"]["current"]]
+        upcoming_ids = [c["id"] for c in data["today"]["upcoming"]]
+
+        self.assertIn(str(self.slot_amit_completed.id), completed_ids)
+        self.assertIn(str(self.slot_amit_current.id), current_ids)
+        self.assertIn(str(self.slot_amit_upcoming.id), upcoming_ids)
+
+    def test_06_weekly_timetable_contains_only_teachers_classes(self):
+        """6. Weekly timetable contains strictly the authenticated teacher's published classes."""
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        weekly = res.data["weekly_timetable"]
+        weekly_ids = [s["id"] for s in weekly]
+        self.assertIn(str(self.slot_amit_completed.id), weekly_ids)
+        self.assertIn(str(self.slot_amit_current.id), weekly_ids)
+        self.assertIn(str(self.slot_amit_upcoming.id), weekly_ids)
+        self.assertNotIn(str(self.slot_suresh_other.id), weekly_ids)
+
+    def test_07_own_leave_requests_returned(self):
+        """7. Authenticated teacher sees only their own leave requests."""
+        leave_amit = TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date="2026-10-10",
+            end_date="2026-10-10",
+            reason="Amit Personal Leave",
+            status=TeacherLeave.Status.PENDING,
+        )
+        leave_suresh = TeacherLeave.objects.create(
+            teacher=self.teacher_suresh,
+            start_date="2026-10-12",
+            end_date="2026-10-12",
+            reason="Suresh Personal Leave",
+            status=TeacherLeave.Status.PENDING,
+        )
+
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        leave_ids = [l["id"] for l in res.data["leave_requests"]]
+        self.assertIn(str(leave_amit.id), leave_ids)
+        self.assertNotIn(str(leave_suresh.id), leave_ids)
+
+    def test_08_relevant_substitutions_returned(self):
+        """8. Teacher sees substitutions where they are either assigned substitute or absent teacher."""
+        sub_amit_absent = TeacherSubstitution.objects.create(
+            timetable_slot=self.slot_amit_completed,
+            absent_teacher=self.teacher_amit,
+            substitute_teacher=self.teacher_suresh,
+            status=TeacherSubstitution.Status.PENDING,
+            assigned_by=self.staff_user,
+        )
+
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        sub_ids = [s["id"] for s in res.data["substitute_classes"]]
+        self.assertIn(str(sub_amit_absent.id), sub_ids)
+
+    def test_09_own_notifications_and_unread_count_returned(self):
+        """9. Only authenticated teacher's notifications and unread counts are exposed."""
+        n1 = Notification.objects.create(
+            recipient=self.teacher_amit_user,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Notification for Amit",
+            message="Welcome Amit",
+            is_read=False,
+        )
+        n_other = Notification.objects.create(
+            recipient=self.teacher_suresh_user,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Notification for Suresh",
+            message="Welcome Suresh",
+            is_read=False,
+        )
+
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        notifs = res.data["notifications"]
+        self.assertEqual(notifs["unread_count"], 1)
+        item_ids = [item["id"] for item in notifs["items"]]
+        self.assertIn(str(n1.id), item_ids)
+        self.assertNotIn(str(n_other.id), item_ids)
+
+    def test_10_relevant_timetable_history_returned(self):
+        """10. Timetable changes relevant to the teacher appear in recent changes."""
+        log = TimetableChangeLog.objects.create(
+            timetable=self.timetable,
+            timetable_slot=self.slot_amit_completed,
+            action=TimetableChangeLog.Action.SLOT_RESCHEDULED,
+            changed_by=self.staff_user,
+            reason="Rescheduled Amit class",
+            old_data={"teacher_id": str(self.teacher_amit.id)},
+            new_data={"teacher_id": str(self.teacher_amit.id)},
+        )
+
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        change_ids = [c["id"] for c in res.data["recent_changes"]]
+        self.assertIn(str(log.id), change_ids)
+
+    def test_11_summary_counts_are_correct(self):
+        """11. Summary metrics accurately calculate today's classes, leaves, substitutions, notifications."""
+        from datetime import datetime
+        from academics.services.teacher_dashboard_service import TeacherDashboardService
+
+        TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date="2026-10-15",
+            end_date="2026-10-15",
+            reason="Leave",
+            status=TeacherLeave.Status.PENDING,
+        )
+        Notification.objects.create(
+            recipient=self.teacher_amit_user,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Notice",
+            message="Notice",
+            is_read=False,
+        )
+
+        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        data = TeacherDashboardService.get_dashboard_data(user=self.teacher_amit_user, reference_datetime=ref_dt)
+
+        summary = data["summary"]
+        self.assertEqual(summary["today_classes_count"], 3)
+        self.assertIsNotNone(summary["current_class"])
+        self.assertEqual(summary["upcoming_classes_count"], 1)
+        self.assertEqual(summary["completed_classes_count"], 1)
+        self.assertEqual(summary["pending_leave_requests"], 1)
+        self.assertEqual(summary["unread_notifications"], 1)
+
+    def test_12_no_other_teachers_private_data_leaks(self):
+        """12. Strict user isolation ensures Suresh's private records are invisible to Amit."""
+        # Suresh's leave & notification
+        TeacherLeave.objects.create(
+            teacher=self.teacher_suresh,
+            start_date="2026-10-20",
+            end_date="2026-10-20",
+            reason="Suresh confidential leave",
+            status=TeacherLeave.Status.PENDING,
+        )
+        Notification.objects.create(
+            recipient=self.teacher_suresh_user,
+            notification_type=Notification.NotificationType.GENERAL,
+            title="Suresh Confidential Notice",
+            message="Private message",
+            is_read=False,
+        )
+
+        self.client.force_authenticate(user=self.teacher_amit_user)
+        res = self.client.get(self.teacher_dashboard_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # Check leaves
+        leave_reasons = [l["reason"] for l in res.data["leave_requests"]]
+        self.assertNotIn("Suresh confidential leave", leave_reasons)
+
+        # Check notifications
+        notif_titles = [n["title"] for n in res.data["notifications"]["items"]]
+        self.assertNotIn("Suresh Confidential Notice", notif_titles)
+
+
 
 
 
