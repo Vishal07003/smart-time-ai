@@ -17,7 +17,13 @@ from academics.models import (
     Program,
     Semester,
     Subject,
+    Notification,
+    TeacherAvailability,
+    TeacherLeave,
+    TeacherSubject,
+    TeacherSubstitution,
     Timetable,
+    TimetableConflict,
     TimetableSlot,
 )
 from academics.validators import (
@@ -26,6 +32,7 @@ from academics.validators import (
     validate_non_empty_name,
     validate_positive_integer,
 )
+from academics.services.conflict_detection import ConflictDetectionService
 from academics.services.constraint_integration import (
     ConstraintIntegrationService,
     SolverConstraintMap,
@@ -37,6 +44,7 @@ from academics.services.constraint_validator import (
     ValidationErrorDetail,
     ValidationResult,
 )
+from academics.services.substitute_service import SubstituteSuggestionService
 from academics.services.timetable_generator import TimetableGenerationService
 from academics.services.timetable_solver import (
     OptimizationConfig,
@@ -4095,6 +4103,811 @@ class NaturalLanguageConstraintAPITests(APITestCase):
 
         new_tt = Timetable.objects.get(id=res.data["timetable_id"])
         self.assertEqual(new_tt.status, Timetable.Status.GENERATED)
+
+
+class TeacherSubstitutionTests(APITestCase):
+    """
+    Phase 10A: Unit and API integration tests for Teacher Replacement & Substitute Suggestion.
+    """
+
+    def setUp(self):
+        from datetime import date
+
+        # 1. Users & Roles
+        self.staff_user = UserModel.objects.create_superuser(
+            username="staff_sub_10a",
+            email="staff.sub.10a@example.com",
+            password="Password123!",
+            role=UserModel.Role.STAFF,
+        )
+        self.user_amit = UserModel.objects.create_user(
+            username="teacher_amit_10a",
+            email="amit.10a@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=UserModel.Role.TEACHER,
+        )
+        self.user_suresh = UserModel.objects.create_user(
+            username="teacher_suresh_10a",
+            email="suresh.10a@example.com",
+            password="Password123!",
+            first_name="Suresh",
+            last_name="Raina",
+            role=UserModel.Role.TEACHER,
+        )
+        self.user_inactive = UserModel.objects.create_user(
+            username="teacher_inact_10a",
+            email="inact.10a@example.com",
+            password="Password123!",
+            first_name="Inactive",
+            last_name="Prof",
+            role=UserModel.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="student_sub_10a",
+            email="student.10a@example.com",
+            password="Password123!",
+            role=UserModel.Role.STUDENT,
+        )
+
+        # 2. Academic Hierarchy
+        self.dept = Department.objects.create(name="Computer Engineering", code="CE_10A")
+        self.program = Program.objects.create(
+            department=self.dept,
+            name="B.Tech Computer Science",
+            code="BTCS_10A",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=7,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(semester=self.semester, name="A", capacity=60)
+        self.batch = PracticalBatch.objects.create(division=self.division, name="B1", capacity=20)
+
+        # 3. Resources & Teacher Profiles
+        self.classroom = Classroom.objects.create(
+            building="Main",
+            room_number="301",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.teacher_amit = TeacherProfile.objects.create(
+            user=self.user_amit,
+            employee_code="EMP_AMIT_10A",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_suresh = TeacherProfile.objects.create(
+            user=self.user_suresh,
+            employee_code="EMP_SURESH_10A",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_inactive = TeacherProfile.objects.create(
+            user=self.user_inactive,
+            employee_code="EMP_INACT_10A",
+            department=self.dept,
+            status=TeacherProfile.Status.INACTIVE,
+        )
+
+        # 4. Subjects & TeacherSubject Qualifications
+        self.subject_java = Subject.objects.create(
+            program=self.program,
+            name="Java Programming",
+            code="CS701_10A",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        self.subject_os = Subject.objects.create(
+            program=self.program,
+            name="Operating Systems",
+            code="CS702_10A",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=3,
+        )
+
+        TeacherSubject.objects.create(teacher=self.teacher_amit, subject=self.subject_java, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_suresh, subject=self.subject_java, priority=2)
+        TeacherSubject.objects.create(teacher=self.teacher_inactive, subject=self.subject_java, priority=3)
+
+        # 5. Published Timetable & Slots
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+        self.slot_monday_10am = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+        self.slot_tuesday_11am = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom,
+            day="TUESDAY",
+            start_time="11:00:00",
+            end_time="12:00:00",
+            session_type="LECTURE",
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        # 6. Approved Leave for Amit: 2026-09-21 (Monday) to 2026-09-22 (Tuesday)
+        self.approved_leave = TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date=date(2026, 9, 21),  # Monday
+            end_date=date(2026, 9, 22),    # Tuesday
+            reason="Medical emergency",
+            status=TeacherLeave.Status.APPROVED,
+        )
+
+        # 7. Pending Leave
+        self.pending_leave = TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date=date(2026, 9, 28),
+            end_date=date(2026, 9, 29),
+            reason="Personal work",
+            status=TeacherLeave.Status.PENDING,
+        )
+
+        self.suggestions_url = reverse("academics:substitute-suggestions")
+        self.substitutions_url = reverse("academics:substitution-list")
+
+    def test_1_get_suggestions_for_approved_leave(self):
+        """1. Staff can view affected slots and eligible substitute candidates for an approved leave."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["teacher_leave"], str(self.approved_leave.id))
+        self.assertEqual(res.data["teacher"]["id"], str(self.teacher_amit.id))
+        self.assertEqual(len(res.data["affected_slots"]), 2)
+
+        slot1 = res.data["affected_slots"][0]
+        self.assertEqual(slot1["day"], "MONDAY")
+        self.assertEqual(len(slot1["candidates"]), 1)
+        candidate = slot1["candidates"][0]
+        self.assertEqual(candidate["teacher_id"], str(self.teacher_suresh.id))
+        self.assertTrue(candidate["qualification_match"])
+        self.assertTrue(candidate["available"])
+        self.assertFalse(candidate["has_clash"])
+
+    def test_2_suggestions_denied_for_teacher_and_student(self):
+        """2. Teacher and student are denied access to substitute suggestions."""
+        self.client.force_authenticate(user=self.user_amit)
+        res_t = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res_t.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=self.student_user)
+        res_s = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res_s.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_3_suggestions_unauthenticated_denied(self):
+        """3. Unauthenticated requests to suggestions endpoint return 401 Unauthorized."""
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_4_suggestions_for_non_approved_leave_fails(self):
+        """4. Requesting suggestions for a PENDING or non-approved leave returns 400 Bad Request."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.pending_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("error", res.data)
+
+    def test_5_suggestions_for_nonexistent_leave_returns_404(self):
+        """5. Requesting suggestions for a non-existent leave UUID returns 404 Not Found."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={uuid.uuid4()}")
+        self.assertEqual(res.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_6_inactive_teacher_not_suggested(self):
+        """6. Inactive teachers are never included in the candidate list."""
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        candidate_ids = [c["teacher_id"] for slot in res.data["affected_slots"] for c in slot["candidates"]]
+        self.assertNotIn(str(self.teacher_inactive.id), candidate_ids)
+
+    def test_7_unqualified_teacher_not_suggested(self):
+        """7. Teachers without required TeacherSubject qualification are not suggested."""
+        # Create a teacher qualified only for OS, not Java
+        user_os = UserModel.objects.create_user(
+            username="teacher_os_10a",
+            email="os.10a@example.com",
+            first_name="Ramesh",
+            last_name="OS",
+            role=UserModel.Role.TEACHER,
+        )
+        teacher_os = TeacherProfile.objects.create(
+            user=user_os,
+            employee_code="EMP_OS_10A",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        TeacherSubject.objects.create(teacher=teacher_os, subject=self.subject_os, priority=1)
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        candidate_ids = [c["teacher_id"] for slot in res.data["affected_slots"] for c in slot["candidates"]]
+        self.assertNotIn(str(teacher_os.id), candidate_ids)
+
+    def test_8_teacher_with_timetable_clash_not_suggested(self):
+        """8. Teacher with an existing class at the same day & time is not suggested."""
+        # Schedule Suresh on Monday 10:00 - 11:00 for OS
+        TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_os,
+            teacher=self.teacher_suresh,
+            classroom=self.classroom,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        # On Monday 10:00 - 11:00, Suresh has a clash, so candidates should be empty
+        monday_slot = next(s for s in res.data["affected_slots"] if s["day"] == "MONDAY")
+        self.assertEqual(len(monday_slot["candidates"]), 0)
+
+        # On Tuesday 11:00 - 12:00, Suresh has no clash, so he should still be suggested
+        tuesday_slot = next(s for s in res.data["affected_slots"] if s["day"] == "TUESDAY")
+        self.assertEqual(len(tuesday_slot["candidates"]), 1)
+
+    def test_9_teacher_on_leave_not_suggested(self):
+        """9. Teacher with an approved leave overlapping that date is not suggested."""
+        from datetime import date
+
+        TeacherLeave.objects.create(
+            teacher=self.teacher_suresh,
+            start_date=date(2026, 9, 21),
+            end_date=date(2026, 9, 21),
+            reason="Sick leave",
+            status=TeacherLeave.Status.APPROVED,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        monday_slot = next(s for s in res.data["affected_slots"] if s["day"] == "MONDAY")
+        self.assertEqual(len(monday_slot["candidates"]), 0)
+
+    def test_10_teacher_unavailable_not_suggested(self):
+        """10. Teacher marked unavailable during the slot day/time is not suggested."""
+        TeacherAvailability.objects.create(
+            teacher=self.teacher_suresh,
+            day="MONDAY",
+            start_time="09:00:00",
+            end_time="12:00:00",
+            is_available=False,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"{self.suggestions_url}?teacher_leave={self.approved_leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        monday_slot = next(s for s in res.data["affected_slots"] if s["day"] == "MONDAY")
+        self.assertEqual(len(monday_slot["candidates"]), 0)
+
+    def test_11_staff_can_confirm_valid_substitution(self):
+        """11. Staff can confirm a substitution and original TimetableSlot teacher remains unchanged."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday_10am.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+            "teacher_leave": str(self.approved_leave.id),
+            "reason": "Covering for Amit Patil on approved medical leave",
+        }
+        res = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(res.data["status"], "CONFIRMED")
+        self.assertEqual(str(res.data["absent_teacher"]), str(self.teacher_amit.id))
+        self.assertEqual(str(res.data["substitute_teacher"]), str(self.teacher_suresh.id))
+
+        # Check DB record
+        sub = TeacherSubstitution.objects.get(id=res.data["id"])
+        self.assertEqual(sub.status, TeacherSubstitution.Status.CONFIRMED)
+        self.assertEqual(sub.assigned_by, self.staff_user)
+
+        # Crucial check: original slot teacher must remain Amit
+        self.slot_monday_10am.refresh_from_db()
+        self.assertEqual(self.slot_monday_10am.teacher_id, self.teacher_amit.id)
+
+    def test_12_confirm_substitution_denied_for_teacher_and_student(self):
+        """12. Teacher and student roles cannot confirm substitutions."""
+        payload = {
+            "timetable_slot": str(self.slot_monday_10am.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+        }
+        self.client.force_authenticate(user=self.user_amit)
+        res_t = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res_t.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=self.student_user)
+        res_s = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res_s.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_13_cannot_substitute_same_absent_teacher(self):
+        """13. Attempting to assign absent teacher as their own substitute fails."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday_10am.id),
+            "substitute_teacher": str(self.teacher_amit.id),
+        }
+        res = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("substitute_teacher", res.data)
+
+    def test_14_cannot_substitute_with_clashing_or_unqualified_teacher(self):
+        """14. Confirming an unqualified teacher fails server-side validation."""
+        user_unq = UserModel.objects.create_user(
+            username="teacher_unq_10a",
+            email="unq.10a@example.com",
+            first_name="Unqualified",
+            last_name="Prof",
+            role=UserModel.Role.TEACHER,
+        )
+        teacher_unq = TeacherProfile.objects.create(
+            user=user_unq,
+            employee_code="EMP_UNQ_10A",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday_10am.id),
+            "substitute_teacher": str(teacher_unq.id),
+        }
+        res = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("substitute_teacher", res.data)
+
+    def test_15_cannot_create_duplicate_active_substitution_for_same_slot(self):
+        """15. Cannot confirm multiple active substitutions for the exact same TimetableSlot."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot_monday_10am.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+        }
+        res1 = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res1.status_code, status.HTTP_201_CREATED)
+
+        # Attempt second confirmation
+        res2 = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res2.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("timetable_slot", res2.data)
+
+    def test_16_slot_on_unpublished_timetable_cannot_be_substituted(self):
+        """16. TimetableSlot on a GENERATED (unpublished) timetable cannot be substituted."""
+        gen_timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=2,
+            status=Timetable.Status.GENERATED,
+        )
+        gen_slot = TimetableSlot.objects.create(
+            timetable=gen_timetable,
+            division=self.division,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+        )
+
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(gen_slot.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+        }
+        res = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("timetable_slot", res.data)
+
+
+class TeacherSubstitutionNotificationWorkflowTests(APITestCase):
+    """
+    Phase 10B: Substitute Teacher Notification + Accept/Decline Workflow Tests.
+    """
+
+    def setUp(self):
+        # 1. Users
+        self.staff_user = UserModel.objects.create_user(
+            username="staff_user_10b",
+            email="staff.10b@example.com",
+            password="Password123!",
+            first_name="Admin",
+            last_name="Staff",
+            role=UserModel.Role.STAFF,
+            is_staff=True,
+        )
+        self.user_amit = UserModel.objects.create_user(
+            username="teacher_amit_10b",
+            email="amit.10b@example.com",
+            password="Password123!",
+            first_name="Amit",
+            last_name="Patil",
+            role=UserModel.Role.TEACHER,
+        )
+        self.user_suresh = UserModel.objects.create_user(
+            username="teacher_suresh_10b",
+            email="suresh.10b@example.com",
+            password="Password123!",
+            first_name="Suresh",
+            last_name="Rao",
+            role=UserModel.Role.TEACHER,
+        )
+        self.user_ramesh = UserModel.objects.create_user(
+            username="teacher_ramesh_10b",
+            email="ramesh.10b@example.com",
+            password="Password123!",
+            first_name="Ramesh",
+            last_name="Kumar",
+            role=UserModel.Role.TEACHER,
+        )
+        self.student_user = UserModel.objects.create_user(
+            username="student_user_10b",
+            email="student.10b@example.com",
+            password="Password123!",
+            first_name="Rahul",
+            last_name="Sharma",
+            role=UserModel.Role.STUDENT,
+        )
+
+        # 2. Academic Hierarchy
+        self.dept = Department.objects.create(name="Computer Engineering 10B", code="CE_10B")
+        self.program = Program.objects.create(
+            department=self.dept,
+            name="B.Tech Computer Science 10B",
+            code="BTCS_10B",
+            duration_years=4,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=7,
+            academic_year="2026-2027",
+        )
+        self.division = Division.objects.create(semester=self.semester, name="A", capacity=60)
+
+        # 3. Resources & Teacher Profiles
+        self.classroom = Classroom.objects.create(
+            building="Main",
+            room_number="301",
+            capacity=60,
+            status=Classroom.Status.AVAILABLE,
+        )
+        self.teacher_amit = TeacherProfile.objects.create(
+            user=self.user_amit,
+            employee_code="EMP_AMIT_10B",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_suresh = TeacherProfile.objects.create(
+            user=self.user_suresh,
+            employee_code="EMP_SURESH_10B",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+        self.teacher_ramesh = TeacherProfile.objects.create(
+            user=self.user_ramesh,
+            employee_code="EMP_RAMESH_10B",
+            department=self.dept,
+            status=TeacherProfile.Status.ACTIVE,
+        )
+
+        # 4. Subjects & Qualifications
+        self.subject_java = Subject.objects.create(
+            program=self.program,
+            name="Java Programming",
+            code="CS701_10B",
+            type=Subject.Type.LECTURE,
+            credits=Decimal("4.0"),
+            weekly_lectures=4,
+        )
+        TeacherSubject.objects.create(teacher=self.teacher_amit, subject=self.subject_java, priority=1)
+        TeacherSubject.objects.create(teacher=self.teacher_suresh, subject=self.subject_java, priority=2)
+        TeacherSubject.objects.create(teacher=self.teacher_ramesh, subject=self.subject_java, priority=3)
+
+        # 5. Published Timetable & Slot
+        self.timetable = Timetable.objects.create(
+            semester=self.semester,
+            academic_year="2026-2027",
+            version=1,
+            status=Timetable.Status.PUBLISHED,
+            created_by=self.staff_user,
+        )
+        self.slot = TimetableSlot.objects.create(
+            timetable=self.timetable,
+            division=self.division,
+            batch=None,
+            subject=self.subject_java,
+            teacher=self.teacher_amit,
+            classroom=self.classroom,
+            day="MONDAY",
+            start_time="10:00:00",
+            end_time="11:00:00",
+            session_type="LECTURE",
+            status=TimetableSlot.Status.SCHEDULED,
+        )
+
+        self.substitutions_url = "/api/v1/substitutions/"
+        self.notifications_url = "/api/v1/notifications/"
+
+    def _create_substitution_helper(self, status=TeacherSubstitution.Status.PENDING):
+        """Helper to create a substitution for test isolation."""
+        sub = TeacherSubstitution.objects.create(
+            timetable_slot=self.slot,
+            absent_teacher=self.teacher_amit,
+            substitute_teacher=self.teacher_suresh,
+            reason="Medical leave cover",
+            status=status,
+            assigned_by=self.staff_user,
+        )
+        return sub
+
+    def test_01_staff_assignment_creates_notification(self):
+        """1. Staff assignment creates notification for substitute teacher."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+            "reason": "Covering for Amit",
+        }
+        res = self.client.post(self.substitutions_url, payload, format="json")
+        self.assertEqual(res.status_code, status.HTTP_201_CREATED)
+
+        # Verify notification created
+        notif = Notification.objects.filter(recipient=self.user_suresh).first()
+        self.assertIsNotNone(notif)
+        self.assertEqual(notif.notification_type, Notification.NotificationType.SUBSTITUTION_ASSIGNED)
+        self.assertEqual(notif.title, "Substitute Class Assigned")
+        self.assertIn("Java Programming", notif.message)
+        self.assertFalse(notif.is_read)
+
+    def test_02_notification_belongs_only_to_assigned_teacher(self):
+        """2. Notification belongs only to assigned teacher and appears in their list."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+        }
+        self.client.post(self.substitutions_url, payload, format="json")
+
+        self.client.force_authenticate(user=self.user_suresh)
+        res = self.client.get(self.notifications_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data if isinstance(res.data, list) else res.data.get("results", [])
+        self.assertTrue(len(results) >= 1)
+        self.assertEqual(results[0]["title"], "Substitute Class Assigned")
+
+    def test_03_other_teacher_cannot_access_it(self):
+        """3. Other teachers cannot access another teacher's notifications."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+        }
+        self.client.post(self.substitutions_url, payload, format="json")
+
+        # Ramesh checks notifications -> should be empty
+        self.client.force_authenticate(user=self.user_ramesh)
+        res = self.client.get(self.notifications_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data if isinstance(res.data, list) else res.data.get("results", [])
+        self.assertEqual(len(results), 0)
+
+    def test_04_student_cannot_access_it(self):
+        """4. Students cannot access teacher notifications."""
+        self.client.force_authenticate(user=self.staff_user)
+        payload = {
+            "timetable_slot": str(self.slot.id),
+            "substitute_teacher": str(self.teacher_suresh.id),
+        }
+        self.client.post(self.substitutions_url, payload, format="json")
+
+        self.client.force_authenticate(user=self.student_user)
+        res = self.client.get(self.notifications_url)
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        results = res.data if isinstance(res.data, list) else res.data.get("results", [])
+        self.assertEqual(len(results), 0)
+
+    def test_05_assigned_teacher_can_accept(self):
+        """5. Assigned substitute teacher can accept the substitution."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.PENDING)
+
+        self.client.force_authenticate(user=self.user_suresh)
+        accept_url = f"{self.substitutions_url}{sub.id}/accept/"
+        res = self.client.post(accept_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["status"], "CONFIRMED")
+
+        sub.refresh_from_db()
+        self.assertEqual(sub.status, TeacherSubstitution.Status.CONFIRMED)
+
+    def test_06_wrong_teacher_cannot_accept(self):
+        """6. Wrong teacher cannot accept a substitution assigned to someone else."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.PENDING)
+
+        self.client.force_authenticate(user=self.user_ramesh)
+        accept_url = f"{self.substitutions_url}{sub.id}/accept/"
+        res = self.client.post(accept_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_07_assigned_teacher_can_decline(self):
+        """7. Assigned substitute teacher can decline the substitution."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.PENDING)
+
+        self.client.force_authenticate(user=self.user_suresh)
+        decline_url = f"{self.substitutions_url}{sub.id}/decline/"
+        res = self.client.post(decline_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertIn(res.data["status"], ["DECLINED", "CANCELLED"])
+
+        sub.refresh_from_db()
+        self.assertIn(sub.status, [TeacherSubstitution.Status.DECLINED, TeacherSubstitution.Status.CANCELLED])
+
+    def test_08_wrong_teacher_cannot_decline(self):
+        """8. Wrong teacher cannot decline a substitution assigned to someone else."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.PENDING)
+
+        self.client.force_authenticate(user=self.user_ramesh)
+        decline_url = f"{self.substitutions_url}{sub.id}/decline/"
+        res = self.client.post(decline_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_09_already_accepted_cannot_be_accepted_again(self):
+        """9. An already confirmed/accepted substitution cannot be accepted again."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.CONFIRMED)
+
+        self.client.force_authenticate(user=self.user_suresh)
+        accept_url = f"{self.substitutions_url}{sub.id}/accept/"
+        res = self.client.post(accept_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_10_cancelled_or_declined_cannot_be_accepted(self):
+        """10. Cancelled or declined substitution cannot be accepted."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.DECLINED)
+
+        self.client.force_authenticate(user=self.user_suresh)
+        accept_url = f"{self.substitutions_url}{sub.id}/accept/"
+        res = self.client.post(accept_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_11_notification_can_be_marked_read_only_by_owner(self):
+        """11. Notification can be marked read by its owner."""
+        notif = Notification.objects.create(
+            recipient=self.user_suresh,
+            notification_type=Notification.NotificationType.SUBSTITUTION_ASSIGNED,
+            title="Test Notice",
+            message="Test Msg",
+        )
+
+        self.client.force_authenticate(user=self.user_suresh)
+        read_url = f"{self.notifications_url}{notif.id}/read/"
+        res = self.client.patch(read_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertTrue(res.data["is_read"])
+        self.assertIsNotNone(res.data["read_at"])
+
+        notif.refresh_from_db()
+        self.assertTrue(notif.is_read)
+
+    def test_12_other_user_cannot_mark_it_read(self):
+        """12. Other users cannot mark another user's notification as read."""
+        notif = Notification.objects.create(
+            recipient=self.user_suresh,
+            notification_type=Notification.NotificationType.SUBSTITUTION_ASSIGNED,
+            title="Test Notice",
+            message="Test Msg",
+        )
+
+        self.client.force_authenticate(user=self.user_ramesh)
+        read_url = f"{self.notifications_url}{notif.id}/read/"
+        res = self.client.patch(read_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_13_staff_receives_notification_after_accept(self):
+        """13. Staff receives notification after substitute accepts."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.PENDING)
+
+        self.client.force_authenticate(user=self.user_suresh)
+        accept_url = f"{self.substitutions_url}{sub.id}/accept/"
+        res = self.client.post(accept_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        staff_notif = Notification.objects.filter(
+            recipient=self.staff_user,
+            notification_type=Notification.NotificationType.SUBSTITUTION_ACCEPTED,
+        ).first()
+        self.assertIsNotNone(staff_notif)
+        self.assertEqual(staff_notif.title, "Substitute Assignment Accepted")
+        self.assertIn("Suresh", staff_notif.message)
+
+    def test_14_staff_receives_notification_after_decline(self):
+        """14. Staff receives notification after substitute declines."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.PENDING)
+
+        self.client.force_authenticate(user=self.user_suresh)
+        decline_url = f"{self.substitutions_url}{sub.id}/decline/"
+        res = self.client.post(decline_url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+
+        staff_notif = Notification.objects.filter(
+            recipient=self.staff_user,
+            notification_type=Notification.NotificationType.SUBSTITUTION_DECLINED,
+        ).first()
+        self.assertIsNotNone(staff_notif)
+        self.assertEqual(staff_notif.title, "Substitute Assignment Declined")
+        self.assertIn("Suresh", staff_notif.message)
+
+    def test_15_original_published_timetable_slot_remains_unchanged(self):
+        """15. Original published TimetableSlot teacher remains strictly unchanged."""
+        sub = self._create_substitution_helper(status=TeacherSubstitution.Status.PENDING)
+
+        # Accept
+        self.client.force_authenticate(user=self.user_suresh)
+        self.client.post(f"{self.substitutions_url}{sub.id}/accept/", format="json")
+        self.slot.refresh_from_db()
+        self.assertEqual(self.slot.teacher_id, self.teacher_amit.id)
+
+        # Decline another
+        sub2 = TeacherSubstitution.objects.create(
+            timetable_slot=self.slot,
+            absent_teacher=self.teacher_amit,
+            substitute_teacher=self.teacher_ramesh,
+            status=TeacherSubstitution.Status.PENDING,
+            assigned_by=self.staff_user,
+        )
+        self.client.force_authenticate(user=self.user_ramesh)
+        self.client.post(f"{self.substitutions_url}{sub2.id}/decline/", format="json")
+        self.slot.refresh_from_db()
+        self.assertEqual(self.slot.teacher_id, self.teacher_amit.id)
+
+    def test_16_phase_10a_substitutions_and_suggestions_still_pass(self):
+        """16. Existing Phase 10A suggestions pipeline continues to function correctly."""
+        leave = TeacherLeave.objects.create(
+            teacher=self.teacher_amit,
+            start_date="2026-10-05",
+            end_date="2026-10-05",
+            reason="Medical Checkup",
+            status=TeacherLeave.Status.APPROVED,
+        )
+        self.client.force_authenticate(user=self.staff_user)
+        res = self.client.get(f"/api/v1/substitutions/suggestions/?teacher_leave={leave.id}")
+        self.assertEqual(res.status_code, status.HTTP_200_OK)
+        self.assertEqual(res.data["teacher"]["id"], str(self.teacher_amit.id))
+        self.assertEqual(len(res.data["affected_slots"]), 1)
+
 
 
 

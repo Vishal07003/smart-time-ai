@@ -1,6 +1,8 @@
 from rest_framework import serializers
 
+from accounts.models import TeacherProfile
 from .models import (
+    Notification,
     Classroom,
     Department,
     Division,
@@ -12,6 +14,7 @@ from .models import (
     TeacherAvailability,
     TeacherLeave,
     TeacherSubject,
+    TeacherSubstitution,
     Timetable,
     TimetableConflict,
     TimetableSlot,
@@ -1090,6 +1093,145 @@ class ConstraintGenerateTimetableRequestSerializer(serializers.Serializer):
         required=True,
         help_text="Academic session in 'YYYY-YYYY' format (e.g., 2026-2027)",
     )
+
+
+class TeacherSubstitutionCreateSerializer(serializers.Serializer):
+    """
+    Request serializer for confirming a teacher substitution.
+    """
+
+    timetable_slot = serializers.PrimaryKeyRelatedField(
+        queryset=TimetableSlot.objects.select_related("timetable", "teacher", "subject").all(),
+        required=True,
+        help_text="UUID of the TimetableSlot to substitute",
+    )
+    substitute_teacher = serializers.PrimaryKeyRelatedField(
+        queryset=TeacherProfile.objects.select_related("user").all(),
+        required=True,
+        help_text="UUID of the TeacherProfile to assign as replacement",
+    )
+    teacher_leave = serializers.PrimaryKeyRelatedField(
+        queryset=TeacherLeave.objects.all(),
+        required=False,
+        allow_null=True,
+        default=None,
+        help_text="Optional UUID of the associated approved TeacherLeave",
+    )
+    reason = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        default="",
+        help_text="Reason for the substitution",
+    )
+
+
+class TeacherSubstitutionSerializer(serializers.ModelSerializer):
+    """
+    Serializer for TeacherSubstitution model with detailed nested representation.
+    """
+
+    absent_teacher_info = serializers.SerializerMethodField()
+    substitute_teacher_info = serializers.SerializerMethodField()
+    slot_info = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TeacherSubstitution
+        fields = [
+            "id",
+            "timetable_slot",
+            "absent_teacher",
+            "substitute_teacher",
+            "teacher_leave",
+            "reason",
+            "status",
+            "assigned_by",
+            "assigned_at",
+            "absent_teacher_info",
+            "substitute_teacher_info",
+            "slot_info",
+            "created_at",
+            "updated_at",
+        ]
+        read_only_fields = [
+            "id",
+            "absent_teacher",
+            "status",
+            "assigned_by",
+            "assigned_at",
+            "created_at",
+            "updated_at",
+        ]
+
+    def get_absent_teacher_info(self, obj):
+        if obj.absent_teacher:
+            return {
+                "id": str(obj.absent_teacher.id),
+                "name": (
+                    obj.absent_teacher.user.get_full_name()
+                    or obj.absent_teacher.user.username
+                ),
+                "employee_code": obj.absent_teacher.employee_code,
+            }
+        return None
+
+    def get_substitute_teacher_info(self, obj):
+        if obj.substitute_teacher:
+            return {
+                "id": str(obj.substitute_teacher.id),
+                "name": (
+                    obj.substitute_teacher.user.get_full_name()
+                    or obj.substitute_teacher.user.username
+                ),
+                "employee_code": obj.substitute_teacher.employee_code,
+            }
+        return None
+
+    def get_slot_info(self, obj):
+        if obj.timetable_slot:
+            slot = obj.timetable_slot
+            return {
+                "id": str(slot.id),
+                "day": slot.day,
+                "start_time": str(slot.start_time),
+                "end_time": str(slot.end_time),
+                "subject_name": slot.subject.name if slot.subject else "",
+                "subject_code": slot.subject.code if slot.subject else "",
+                "division_name": slot.division.name if slot.division else "",
+            }
+        return None
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    """
+    Serializer for internal user Notifications.
+    """
+
+    class Meta:
+        model = Notification
+        fields = [
+            "id",
+            "recipient",
+            "notification_type",
+            "title",
+            "message",
+            "related_substitution",
+            "is_read",
+            "created_at",
+            "read_at",
+        ]
+        read_only_fields = [
+            "id",
+            "recipient",
+            "notification_type",
+            "title",
+            "message",
+            "related_substitution",
+            "is_read",
+            "created_at",
+            "read_at",
+        ]
+
+
 
 
 
