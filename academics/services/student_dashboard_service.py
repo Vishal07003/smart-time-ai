@@ -147,28 +147,31 @@ class StudentDashboardService:
         else:
             batch_filter = Q(batch__isnull=True)
 
-        # 1. TODAY'S CLASSES FOR AUTHENTICATED STUDENT'S DIVISION & BATCH
-        today_slots_qs = (
-            TimetableSlot.objects.filter(
-                timetable__status=Timetable.Status.PUBLISHED,
-                division=division,
-                day=current_day_name,
+        if division:
+            # 1. TODAY'S CLASSES FOR AUTHENTICATED STUDENT'S DIVISION & BATCH
+            today_slots_qs = (
+                TimetableSlot.objects.filter(
+                    timetable__status=Timetable.Status.PUBLISHED,
+                    division=division,
+                    day=current_day_name,
+                )
+                .filter(batch_filter)
+                .exclude(status=TimetableSlot.Status.CANCELLED)
+                .select_related(
+                    "timetable",
+                    "timetable__semester",
+                    "subject",
+                    "teacher",
+                    "teacher__user",
+                    "division",
+                    "batch",
+                    "classroom",
+                    "laboratory",
+                )
+                .order_by("start_time")
             )
-            .filter(batch_filter)
-            .exclude(status=TimetableSlot.Status.CANCELLED)
-            .select_related(
-                "timetable",
-                "timetable__semester",
-                "subject",
-                "teacher",
-                "teacher__user",
-                "division",
-                "batch",
-                "classroom",
-                "laboratory",
-            )
-            .order_by("start_time")
-        )
+        else:
+            today_slots_qs = TimetableSlot.objects.none()
 
         all_today_classes: List[Dict[str, Any]] = []
         current_classes: List[Dict[str, Any]] = []
@@ -204,85 +207,92 @@ class StudentDashboardService:
         }
 
         # 2. WEEKLY TIMETABLE FOR AUTHENTICATED STUDENT
-        weekly_slots_qs = (
-            TimetableSlot.objects.filter(
-                timetable__status=Timetable.Status.PUBLISHED,
-                division=division,
+        if division:
+            weekly_slots_qs = (
+                TimetableSlot.objects.filter(
+                    timetable__status=Timetable.Status.PUBLISHED,
+                    division=division,
+                )
+                .filter(batch_filter)
+                .exclude(status=TimetableSlot.Status.CANCELLED)
+                .select_related(
+                    "timetable",
+                    "timetable__semester",
+                    "subject",
+                    "teacher",
+                    "teacher__user",
+                    "division",
+                    "batch",
+                    "classroom",
+                    "laboratory",
+                )
             )
-            .filter(batch_filter)
-            .exclude(status=TimetableSlot.Status.CANCELLED)
-            .select_related(
-                "timetable",
-                "timetable__semester",
-                "subject",
-                "teacher",
-                "teacher__user",
-                "division",
-                "batch",
-                "classroom",
-                "laboratory",
+            day_index_map = {d: i for i, d in enumerate(cls.DAYS_ORDER)}
+            weekly_slots_list = [cls.format_slot(s) for s in weekly_slots_qs]
+            weekly_slots_list.sort(
+                key=lambda s: (day_index_map.get(s["day"], 99), s["start_time"])
             )
-        )
-        day_index_map = {d: i for i, d in enumerate(cls.DAYS_ORDER)}
-        weekly_slots_list = [cls.format_slot(s) for s in weekly_slots_qs]
-        weekly_slots_list.sort(
-            key=lambda s: (day_index_map.get(s["day"], 99), s["start_time"])
-        )
+        else:
+            weekly_slots_list = []
 
         # 3. RESCHEDULED CLASSES RELEVANT TO STUDENT
-        reschedules_qs = (
-            SlotReschedule.objects.filter(
-                Q(original_slot__division=division)
-                | Q(new_timetable__semester=division.semester)
+        if division:
+            reschedules_qs = (
+                SlotReschedule.objects.filter(
+                    Q(original_slot__division=division)
+                    | Q(new_timetable__semester=division.semester)
+                )
+                .select_related(
+                    "original_slot",
+                    "original_slot__subject",
+                    "original_slot__division",
+                    "original_slot__batch",
+                    "original_slot__classroom",
+                    "original_slot__laboratory",
+                    "original_slot__teacher",
+                    "original_slot__teacher__user",
+                    "original_slot__timetable",
+                    "new_teacher",
+                    "new_teacher__user",
+                    "new_classroom",
+                    "new_laboratory",
+                    "new_timetable",
+                )
+                .order_by("-created_at")[:15]
             )
-            .select_related(
-                "original_slot",
-                "original_slot__subject",
-                "original_slot__division",
-                "original_slot__batch",
-                "original_slot__classroom",
-                "original_slot__laboratory",
-                "original_slot__teacher",
-                "original_slot__teacher__user",
-                "new_teacher",
-                "new_teacher__user",
-                "new_classroom",
-                "new_laboratory",
-                "new_timetable",
-            )
-            .order_by("-created_at")[:15]
-        )
-        rescheduled_classes_data = []
-        for r in reschedules_qs:
-            # Check batch compatibility if batch is specified on original slot
-            if r.original_slot and r.original_slot.batch and batch and r.original_slot.batch != batch:
-                continue
+            rescheduled_classes_data = []
+            for r in reschedules_qs:
+                # Check batch compatibility if batch is specified on original slot
+                if r.original_slot and r.original_slot.batch and batch and r.original_slot.batch != batch:
+                    continue
 
-            orig_slot_data = cls.format_slot(r.original_slot) if r.original_slot else None
-            new_teacher_name = None
-            if r.new_teacher and r.new_teacher.user:
-                new_teacher_name = r.new_teacher.user.get_full_name() or r.new_teacher.user.username
+                orig_slot_data = cls.format_slot(r.original_slot) if r.original_slot else None
+                new_teacher_name = None
+                if r.new_teacher and r.new_teacher.user:
+                    new_teacher_name = r.new_teacher.user.get_full_name() or r.new_teacher.user.username
 
-            new_room = None
-            if r.new_classroom:
-                new_room = f"{r.new_classroom.building}-{r.new_classroom.room_number}"
-            elif r.new_laboratory:
-                new_room = f"{r.new_laboratory.building}-{r.new_laboratory.lab_number}"
+                new_room = None
+                if r.new_classroom:
+                    new_room = f"{r.new_classroom.building}-{r.new_classroom.room_number}"
+                elif r.new_laboratory:
+                    new_room = f"{r.new_laboratory.building}-{r.new_laboratory.lab_number}"
 
-            rescheduled_classes_data.append(
-                {
-                    "id": str(r.id),
-                    "status": r.status,
-                    "original_slot": orig_slot_data,
-                    "new_day": r.new_day,
-                    "new_start_time": str(r.new_start_time)[:5],
-                    "new_end_time": str(r.new_end_time)[:5],
-                    "new_teacher_name": new_teacher_name,
-                    "new_room": new_room,
-                    "reason": r.reason,
-                    "created_at": r.created_at.isoformat(),
-                }
-            )
+                rescheduled_classes_data.append(
+                    {
+                        "id": str(r.id),
+                        "status": r.status,
+                        "original_slot": orig_slot_data,
+                        "new_day": r.new_day,
+                        "new_start_time": str(r.new_start_time)[:5],
+                        "new_end_time": str(r.new_end_time)[:5],
+                        "new_teacher_name": new_teacher_name,
+                        "new_room": new_room,
+                        "reason": r.reason,
+                        "created_at": r.created_at.isoformat(),
+                    }
+                )
+        else:
+            rescheduled_classes_data = []
 
         # 4. NOTIFICATIONS (Strictly for authenticated user)
         notifications_qs = (
@@ -311,34 +321,37 @@ class StudentDashboardService:
         }
 
         # 5. RECENT TIMETABLE CHANGES (Relevant to student's division and semester)
-        div_id_str = str(division.id)
-        recent_changes_qs = (
-            TimetableChangeLog.objects.filter(
-                Q(timetable_slot__division=division)
-                | Q(timetable__semester=division.semester)
-                | Q(new_data__division_id=div_id_str)
-                | Q(old_data__division_id=div_id_str)
+        if division:
+            div_id_str = str(division.id)
+            recent_changes_qs = (
+                TimetableChangeLog.objects.filter(
+                    Q(timetable_slot__division=division)
+                    | Q(timetable__semester=division.semester)
+                    | Q(new_data__division_id=div_id_str)
+                    | Q(old_data__division_id=div_id_str)
+                )
+                .select_related("timetable", "timetable_slot", "changed_by")
+                .order_by("-created_at")[:15]
             )
-            .select_related("timetable", "timetable_slot", "changed_by")
-            .order_by("-created_at")[:15]
-        )
-        recent_changes_data = [
-            {
-                "id": str(log.id),
-                "action": log.action,
-                "timetable_id": str(log.timetable_id),
-                "slot_id": str(log.timetable_slot_id) if log.timetable_slot_id else None,
-                "subject": (
-                    log.new_data.get("subject")
-                    or (log.old_data.get("subject") if log.old_data else None)
-                ) if log.new_data else (log.old_data.get("subject") if log.old_data else None),
-                "reason": log.reason,
-                "old_data": log.old_data,
-                "new_data": log.new_data,
-                "created_at": log.created_at.isoformat(),
-            }
-            for log in recent_changes_qs
-        ]
+            recent_changes_data = [
+                {
+                    "id": str(log.id),
+                    "action": log.action,
+                    "timetable_id": str(log.timetable_id),
+                    "slot_id": str(log.timetable_slot_id) if log.timetable_slot_id else None,
+                    "subject": (
+                        log.new_data.get("subject")
+                        or (log.old_data.get("subject") if log.old_data else None)
+                    ) if log.new_data else (log.old_data.get("subject") if log.old_data else None),
+                    "reason": log.reason,
+                    "old_data": log.old_data,
+                    "new_data": log.new_data,
+                    "created_at": log.created_at.isoformat(),
+                }
+                for log in recent_changes_qs
+            ]
+        else:
+            recent_changes_data = []
 
         # 6. SUMMARY
         summary_data = {
