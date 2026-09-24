@@ -1343,8 +1343,17 @@ class StaffDashboardView(APIView):
     permission_classes = [IsAuthenticated, IsStaffRole]
 
     def get(self, request, *args, **kwargs):
-        dashboard_data = StaffDashboardService.get_dashboard_data(user=request.user)
-        return Response(dashboard_data, status=status.HTTP_200_OK)
+        try:
+            dashboard_data = StaffDashboardService.get_dashboard_data(user=request.user)
+            return Response(dashboard_data, status=status.HTTP_200_OK)
+        except DjangoValidationError as e:
+            if hasattr(e, "message_dict"):
+                return Response(e.message_dict, status=status.HTTP_400_BAD_REQUEST)
+            if hasattr(e, "messages"):
+                return Response({"detail": e.messages}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 
 class TeacherDashboardView(APIView):
