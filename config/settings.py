@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     # Local apps
     "accounts",
     "academics",
+    "staff",
 ]
 
 MIDDLEWARE = [
@@ -103,6 +104,17 @@ else:
 
 # Custom User Model
 AUTH_USER_MODEL = "accounts.User"
+
+# Authentication Backends (supports login by username or email)
+AUTHENTICATION_BACKENDS = [
+    "staff.backends.EmailOrUsernameModelBackend",
+    "django.contrib.auth.backends.ModelBackend",
+]
+
+# Web Authentication URLs
+LOGIN_URL = "staff:login"
+LOGIN_REDIRECT_URL = "staff:dashboard"
+LOGOUT_REDIRECT_URL = "staff:login"
 
 
 # Password validation

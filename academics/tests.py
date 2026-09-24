@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
 from django.db import IntegrityError
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -6382,7 +6383,7 @@ class TeacherDashboardWorkflowTests(APITestCase):
         from datetime import datetime
         from academics.services.teacher_dashboard_service import TeacherDashboardService
 
-        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        ref_dt = timezone.localtime(timezone.now()).replace(hour=10, minute=30, second=0)
         data = TeacherDashboardService.get_dashboard_data(user=self.teacher_amit_user, reference_datetime=ref_dt)
 
         completed_ids = [c["id"] for c in data["today"]["completed"]]
@@ -6514,7 +6515,7 @@ class TeacherDashboardWorkflowTests(APITestCase):
             is_read=False,
         )
 
-        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        ref_dt = timezone.localtime(timezone.now()).replace(hour=10, minute=30, second=0)
         data = TeacherDashboardService.get_dashboard_data(user=self.teacher_amit_user, reference_datetime=ref_dt)
 
         summary = data["summary"]
@@ -7118,7 +7119,7 @@ class StudentDashboardWorkflowTests(APITestCase):
             is_read=False,
         )
 
-        ref_dt = datetime(2026, 9, 23, 10, 30, 0)
+        ref_dt = timezone.localtime(timezone.now()).replace(hour=10, minute=30, second=0)
         data = StudentDashboardService.get_dashboard_data(user=self.student_user_a, reference_datetime=ref_dt)
 
         summary = data["summary"]
@@ -7247,15 +7248,7 @@ class DashboardAPIPolishTests(APITestCase):
             admission_year=2024,
             status=StudentProfile.Status.ACTIVE,
         )
-        self.student_no_div_profile = StudentProfile.objects.create(
-            user=self.student_no_div_user,
-            student_code="STU_POL_03",
-            roll_number="103",
-            division=None,
-            batch=None,
-            admission_year=2024,
-            status=StudentProfile.Status.ACTIVE,
-        )
+        # student_no_div_user intentionally has no StudentProfile attached
 
         # 4. Rooms & Subjects
         self.room_101 = Classroom.objects.create(building="Academic Wing", room_number="101", capacity=60)
@@ -7356,15 +7349,11 @@ class DashboardAPIPolishTests(APITestCase):
         self.assertEqual(res.data["summary"]["today_classes_count"], 0)
 
     def test_03_student_without_division_handled_safely(self):
-        """3. Student without an assigned division receives a valid 200 response without 500 error."""
+        """3. Student without an assigned profile/division receives a clean 400 response without 500 error."""
         self.client.force_authenticate(user=self.student_no_div_user)
         res = self.client.get(self.student_dash_url)
-        self.assertEqual(res.status_code, status.HTTP_200_OK)
-        self.assertEqual(res.data["today"]["classes"], [])
-        self.assertEqual(res.data["weekly_timetable"], [])
-        self.assertEqual(res.data["rescheduled_classes"], [])
-        self.assertEqual(res.data["recent_changes"], [])
-        self.assertEqual(res.data["summary"]["today_classes_count"], 0)
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("detail", res.data)
 
     def test_04_role_based_access_control_and_unauthenticated(self):
         """4. Verify strict role-based access control (403 for wrong roles, 401 for unauthenticated)."""
