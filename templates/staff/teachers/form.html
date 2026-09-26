@@ -1,0 +1,707 @@
+{% extends "staff/base.html" %}
+
+{% block title %}
+    {% if is_edit %}Edit {{ teacher.user.get_full_name|default:teacher.user.username }} | Staff Workspace | SMART-TIME AI{% else %}Add Teacher | Staff Workspace | SMART-TIME AI{% endif %}
+{% endblock %}
+
+{% block header_title %}
+    {% if is_edit %}Edit Teacher{% else %}Add Teacher{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto w-full space-y-6">
+    <!-- Breadcrumb & Top Bar -->
+    <div class="flex items-center justify-between">
+        <a href="{% if is_edit %}{% url 'staff:teacher_detail' id=teacher.id %}{% else %}{% url 'staff:teachers' %}{% endif %}" class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-indigo-600 transition">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to {% if is_edit %}Teacher Profile{% else %}Teachers Directory{% endif %}</span>
+        </a>
+    </div>
+
+    <!-- Header Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+            <div class="h-12 w-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center font-bold text-indigo-700 text-base flex-shrink-0">
+                {% if is_edit %}
+                    {% if teacher.user.first_name %}
+                        {{ teacher.user.first_name|slice:":1"|upper }}{{ teacher.user.last_name|slice:":1"|upper }}
+                    {% else %}
+                        {{ teacher.user.username|slice:":2"|upper }}
+                    {% endif %}
+                {% else %}
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="8.5" cy="7" r="4"></circle>
+                        <line x1="20" y1="8" x2="20" y2="14"></line>
+                        <line x1="23" y1="11" x2="17" y2="11"></line>
+                    </svg>
+                {% endif %}
+            </div>
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 tracking-tight">
+                    {% if is_edit %}
+                        Edit Teacher: {{ teacher.user.get_full_name|default:teacher.user.username }}
+                    {% else %}
+                        Create New Faculty Member
+                    {% endif %}
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    {% if is_edit %}
+                        Update user credentials, institutional appointment, and department details.
+                    {% else %}
+                        Register a new teacher account and faculty profile with automatic employee sequencing.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
+        {% if is_edit %}
+            <div>
+                {% if teacher.status == 'ACTIVE' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                        ACTIVE
+                    </span>
+                {% else %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+                        INACTIVE
+                    </span>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Main Form Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 sm:p-8 shadow-xs">
+        <form method="post" novalidate class="space-y-8" id="teacherForm">
+            {% csrf_token %}
+
+            <!-- Non-field Errors -->
+            {% if form.non_field_errors %}
+                <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-1">
+                    {% for error in form.non_field_errors %}
+                        <div class="flex items-center gap-2">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-rose-600 flex-shrink-0">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                            <span>{{ error }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <!-- SECTION 1: USER ACCOUNT & IDENTITY -->
+            <div class="space-y-5">
+                <div class="border-b border-slate-100 pb-3">
+                    <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                            <circle cx="12" cy="7" r="4"></circle>
+                        </svg>
+                        <span>User Account &amp; Identity</span>
+                    </h3>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Authentication and personal contact information</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <!-- ROW 1: Username & Teacher Code -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Username {% if not is_edit %}<span class="text-rose-500">*</span>{% endif %}
+                        </label>
+                        {% if not is_edit %}
+                            {{ form.username }}
+                            {% if form.username.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.username.errors.0 }}</p>
+                            {% endif %}
+                            <p class="text-[11px] text-slate-400 mt-1">Unique login handle (letters, numbers, underscores).</p>
+                        {% else %}
+                            <div class="w-full px-3.5 py-2.5 text-xs text-slate-500 border border-slate-200 rounded-xl bg-slate-100 font-mono cursor-not-allowed">
+                                @{{ teacher.user.username }}
+                            </div>
+                            <p class="text-[11px] text-slate-400 mt-1">Username cannot be changed after registration.</p>
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Teacher Code
+                        </label>
+                        <div class="relative">
+                            <input type="text"
+                                   value="{% if is_edit %}{{ teacher.employee_code }}{% else %}{{ next_employee_code }}{% endif %}"
+                                   readonly
+                                   disabled
+                                   class="w-full pl-3.5 pr-28 py-2.5 text-xs text-slate-700 border border-slate-200 rounded-xl bg-slate-100 font-mono cursor-not-allowed">
+                            <span class="absolute inset-y-0 right-0 pr-2.5 flex items-center pointer-events-none">
+                                <span class="inline-flex items-center gap-1 text-[10px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200/80 px-2 py-0.5 rounded-md">
+                                    {% if is_edit %}Locked{% else %}Auto-Generated{% endif %}
+                                </span>
+                            </span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">
+                            {% if is_edit %}
+                                Teacher code is preserved and cannot be modified.
+                            {% else %}
+                                Generated automatically in sequential order (T-xxx).
+                            {% endif %}
+                        </p>
+                    </div>
+
+                    <!-- ROW 2: First Name & Last Name -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            First Name
+                        </label>
+                        {{ form.first_name }}
+                        {% if form.first_name.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.first_name.errors.0 }}</p>
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Last Name
+                        </label>
+                        {{ form.last_name }}
+                        {% if form.last_name.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.last_name.errors.0 }}</p>
+                        {% endif %}
+                    </div>
+
+                    <!-- ROW 3: Phone Number & Email Address -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Phone Number
+                        </label>
+                        {{ form.phone }}
+                        {% if form.phone.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.phone.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">10-digit mobile number for emergency notifications.</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Email Address <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.email }}
+                        {% if form.email.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.email.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Official institutional email for schedule notifications.</p>
+                    </div>
+
+                    <!-- ROW 4 (CREATE ONLY): Password & Confirm Password -->
+                    {% if not is_edit %}
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                                Initial Password <span class="text-rose-500">*</span>
+                            </label>
+                            {{ form.password }}
+                            {% if form.password.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.password.errors.0 }}</p>
+                            {% endif %}
+                            <p class="text-[11px] text-slate-400 mt-1">Minimum 8 characters with letters &amp; numbers.</p>
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                                Confirm Password <span class="text-rose-500">*</span>
+                            </label>
+                            {{ form.confirm_password }}
+                            {% if form.confirm_password.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.confirm_password.errors.0 }}</p>
+                            {% endif %}
+                            <p class="text-[11px] text-slate-400 mt-1">Must match initial password exactly.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- SECTION 2: FACULTY PROFILE & DEPARTMENT -->
+            <div class="space-y-5 pt-4">
+                <div class="border-b border-slate-100 pb-3">
+                    <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600">
+                            <path d="M22 10v6M2 10l10-5 10 5-10 5z"></path>
+                            <path d="M6 12v5c3 3 9 3 12 0v-5"></path>
+                        </svg>
+                        <span>Faculty Profile &amp; Department</span>
+                    </h3>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Institutional appointment and employment records</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                    <!-- ROW 1: Department Searchable Combobox & Designation Searchable Combobox -->
+                    <div class="relative" id="departmentCombobox">
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Department <span class="text-rose-500">*</span>
+                        </label>
+
+                        <!-- Hidden real form field -->
+                        <input type="hidden"
+                               name="department"
+                               id="id_department"
+                               value="{% if form.department.value %}{{ form.department.value }}{% elif is_edit %}{{ teacher.department.id }}{% endif %}">
+
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="11" cy="11" r="8"></circle>
+                                    <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+                                </svg>
+                            </span>
+                            <input type="text"
+                                   id="departmentSearchInput"
+                                   placeholder="Search and select department..."
+                                   autocomplete="off"
+                                   class="w-full pl-9 pr-14 py-2.5 text-xs text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400">
+
+                            <!-- Clear & Toggle icons -->
+                            <div class="absolute inset-y-0 right-0 pr-2.5 flex items-center gap-1">
+                                <button type="button" id="departmentClearBtn" class="hidden p-1 text-slate-400 hover:text-slate-600 rounded" title="Clear selection">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
+                                </button>
+                                <button type="button" id="departmentChevronBtn" class="p-1 text-slate-400 hover:text-slate-600 rounded" tabindex="-1">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Dropdown list -->
+                        <div id="departmentDropdown" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-y-auto z-50 divide-y divide-slate-100">
+                            {% for dept in departments %}
+                                <div class="dept-option cursor-pointer px-3.5 py-2.5 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center justify-between transition"
+                                     data-id="{{ dept.id }}"
+                                     data-name="{{ dept.name }}"
+                                     data-code="{{ dept.code }}">
+                                    <span class="font-medium dept-name-text">{{ dept.name }}</span>
+                                    <span class="font-mono text-[10px] text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">({{ dept.code }})</span>
+                                </div>
+                            {% endfor %}
+                            <div id="deptNoMatch" class="hidden p-3 text-center text-xs text-slate-400">
+                                No matching department found
+                            </div>
+                        </div>
+
+                        {% if form.department.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.department.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Select from existing university departments.</p>
+                    </div>
+
+                    <!-- Designation Searchable Combobox -->
+                    <div class="relative" id="designationCombobox">
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Designation <span class="text-rose-500">*</span>
+                        </label>
+
+                        <div class="relative">
+                            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20 7h-9"></path>
+                                    <path d="M14 17H5"></path>
+                                    <circle cx="17" cy="17" r="3"></circle>
+                                    <circle cx="7" cy="7" r="3"></circle>
+                                </svg>
+                            </span>
+                            <input type="text"
+                                   name="designation"
+                                   id="id_designation"
+                                   value="{{ form.designation.value|default:'' }}"
+                                   placeholder="Type or select designation..."
+                                   autocomplete="off"
+                                   class="w-full pl-9 pr-14 py-2.5 text-xs text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400">
+
+                            <!-- Clear & Toggle icons -->
+                            <div class="absolute inset-y-0 right-0 pr-2.5 flex items-center gap-1">
+                                <button type="button" id="designationClearBtn" class="hidden p-1 text-slate-400 hover:text-slate-600 rounded" title="Clear">
+                                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <line x1="18" y1="6" x2="6" y2="18"></line>
+                                        <line x1="6" y1="6" x2="18" y2="18"></line>
+                                    </svg>
+                                </button>
+                                <button type="button" id="designationChevronBtn" class="p-1 text-slate-400 hover:text-slate-600 rounded" tabindex="-1">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="6 9 12 15 18 9"></polyline>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Dropdown list -->
+                        <div id="designationDropdown" class="hidden absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-y-auto z-50 divide-y divide-slate-100">
+                            {% for desig in designations %}
+                                <div class="desig-option cursor-pointer px-3.5 py-2.5 text-xs text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 flex items-center justify-between transition"
+                                     data-value="{{ desig }}">
+                                    <span class="font-medium">{{ desig }}</span>
+                                    <span class="text-[10px] text-slate-400">Faculty Role</span>
+                                </div>
+                            {% endfor %}
+                            <div id="desigNoMatch" class="hidden p-3 text-center text-xs text-slate-400">
+                                Press Enter to use your typed custom designation
+                            </div>
+                        </div>
+
+                        {% if form.designation.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.designation.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Select an existing designation or type a custom appointment title.</p>
+                    </div>
+
+                    <!-- ROW 2: Joining Date & Employment Status -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Joining Date
+                        </label>
+                        {{ form.joining_date }}
+                        {% if form.joining_date.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.joining_date.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Official date when faculty joined the institution.</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Employment Status <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.status }}
+                        {% if form.status.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.status.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Active faculty are eligible for timetable scheduling.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="pt-6 border-t border-slate-100 flex items-center justify-end gap-3">
+                <a href="{% if is_edit %}{% url 'staff:teacher_detail' id=teacher.id %}{% else %}{% url 'staff:teachers' %}{% endif %}" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    Cancel
+                </a>
+                <button type="submit" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150">
+                    {% if is_edit %}Save Changes{% else %}Create Faculty Member{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Searchable Comboboxes Client-side Interactive Logic -->
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    /* ==========================================================
+       1. DEPARTMENT SEARCHABLE COMBOBOX
+       ========================================================== */
+    const deptHidden = document.getElementById('id_department');
+    const deptInput = document.getElementById('departmentSearchInput');
+    const deptDropdown = document.getElementById('departmentDropdown');
+    const deptClearBtn = document.getElementById('departmentClearBtn');
+    const deptChevronBtn = document.getElementById('departmentChevronBtn');
+    const deptOptions = document.querySelectorAll('.dept-option');
+    const deptNoMatch = document.getElementById('deptNoMatch');
+    let deptActiveIndex = -1;
+
+    // Initialize with existing value
+    function initDepartment() {
+        const currentVal = deptHidden.value.trim();
+        if (currentVal) {
+            deptOptions.forEach(opt => {
+                if (opt.getAttribute('data-id') === currentVal) {
+                    const name = opt.getAttribute('data-name');
+                    const code = opt.getAttribute('data-code');
+                    deptInput.value = `${name} (${code})`;
+                    deptClearBtn.classList.remove('hidden');
+                }
+            });
+        }
+    }
+    initDepartment();
+
+    function showDeptDropdown() {
+        deptDropdown.classList.remove('hidden');
+        filterDeptOptions();
+    }
+
+    function hideDeptDropdown() {
+        deptDropdown.classList.add('hidden');
+        deptActiveIndex = -1;
+        updateDeptActive();
+    }
+
+    function filterDeptOptions() {
+        const query = deptInput.value.toLowerCase().trim();
+        let visibleCount = 0;
+        deptOptions.forEach(opt => {
+            const name = opt.getAttribute('data-name').toLowerCase();
+            const code = opt.getAttribute('data-code').toLowerCase();
+            if (name.includes(query) || code.includes(query)) {
+                opt.classList.remove('hidden');
+                visibleCount++;
+            } else {
+                opt.classList.add('hidden');
+            }
+        });
+        if (visibleCount === 0) {
+            deptNoMatch.classList.remove('hidden');
+        } else {
+            deptNoMatch.classList.add('hidden');
+        }
+    }
+
+    function selectDept(optionEl) {
+        const id = optionEl.getAttribute('data-id');
+        const name = optionEl.getAttribute('data-name');
+        const code = optionEl.getAttribute('data-code');
+        deptHidden.value = id;
+        deptInput.value = `${name} (${code})`;
+        deptClearBtn.classList.remove('hidden');
+        hideDeptDropdown();
+    }
+
+    function clearDept() {
+        deptHidden.value = '';
+        deptInput.value = '';
+        deptClearBtn.classList.add('hidden');
+        deptOptions.forEach(opt => opt.classList.remove('hidden'));
+        deptNoMatch.classList.add('hidden');
+        hideDeptDropdown();
+        deptInput.focus();
+    }
+
+    function getVisibleDeptOptions() {
+        return Array.from(deptOptions).filter(opt => !opt.classList.contains('hidden'));
+    }
+
+    function updateDeptActive() {
+        const visible = getVisibleDeptOptions();
+        visible.forEach((opt, idx) => {
+            if (idx === deptActiveIndex) {
+                opt.classList.add('bg-indigo-50', 'text-indigo-700');
+                opt.scrollIntoView({ block: 'nearest' });
+            } else {
+                opt.classList.remove('bg-indigo-50', 'text-indigo-700');
+            }
+        });
+    }
+
+    deptInput.addEventListener('focus', showDeptDropdown);
+    deptInput.addEventListener('click', showDeptDropdown);
+    deptChevronBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (deptDropdown.classList.contains('hidden')) {
+            showDeptDropdown();
+            deptInput.focus();
+        } else {
+            hideDeptDropdown();
+        }
+    });
+
+    deptInput.addEventListener('input', function () {
+        deptClearBtn.classList.toggle('hidden', !deptInput.value);
+        showDeptDropdown();
+        filterDeptOptions();
+        deptActiveIndex = -1;
+    });
+
+    deptInput.addEventListener('keydown', function (e) {
+        const visible = getVisibleDeptOptions();
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (deptDropdown.classList.contains('hidden')) {
+                showDeptDropdown();
+            } else if (visible.length > 0) {
+                deptActiveIndex = (deptActiveIndex + 1) % visible.length;
+                updateDeptActive();
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (visible.length > 0) {
+                deptActiveIndex = (deptActiveIndex - 1 + visible.length) % visible.length;
+                updateDeptActive();
+            }
+        } else if (e.key === 'Enter') {
+            if (!deptDropdown.classList.contains('hidden') && deptActiveIndex >= 0 && visible[deptActiveIndex]) {
+                e.preventDefault();
+                selectDept(visible[deptActiveIndex]);
+            }
+        } else if (e.key === 'Escape') {
+            hideDeptDropdown();
+        }
+    });
+
+    deptOptions.forEach(opt => {
+        opt.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            selectDept(opt);
+        });
+    });
+
+    deptClearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        clearDept();
+    });
+
+    /* ==========================================================
+       2. DESIGNATION SEARCHABLE COMBOBOX
+       ========================================================== */
+    const desigInput = document.getElementById('id_designation');
+    const desigDropdown = document.getElementById('designationDropdown');
+    const desigClearBtn = document.getElementById('designationClearBtn');
+    const desigChevronBtn = document.getElementById('designationChevronBtn');
+    const desigOptions = document.querySelectorAll('.desig-option');
+    const desigNoMatch = document.getElementById('desigNoMatch');
+    let desigActiveIndex = -1;
+
+    function showDesigDropdown() {
+        desigDropdown.classList.remove('hidden');
+        filterDesigOptions();
+    }
+
+    function hideDesigDropdown() {
+        desigDropdown.classList.add('hidden');
+        desigActiveIndex = -1;
+        updateDesigActive();
+    }
+
+    function filterDesigOptions() {
+        const query = desigInput.value.toLowerCase().trim();
+        let visibleCount = 0;
+        desigOptions.forEach(opt => {
+            const val = opt.getAttribute('data-value').toLowerCase();
+            if (val.includes(query)) {
+                opt.classList.remove('hidden');
+                visibleCount++;
+            } else {
+                opt.classList.add('hidden');
+            }
+        });
+        if (visibleCount === 0) {
+            desigNoMatch.classList.remove('hidden');
+        } else {
+            desigNoMatch.classList.add('hidden');
+        }
+    }
+
+    function selectDesig(optionEl) {
+        const val = optionEl.getAttribute('data-value');
+        desigInput.value = val;
+        desigClearBtn.classList.remove('hidden');
+        hideDesigDropdown();
+    }
+
+    function clearDesig() {
+        desigInput.value = '';
+        desigClearBtn.classList.add('hidden');
+        desigOptions.forEach(opt => opt.classList.remove('hidden'));
+        desigNoMatch.classList.add('hidden');
+        hideDesigDropdown();
+        desigInput.focus();
+    }
+
+    function getVisibleDesigOptions() {
+        return Array.from(desigOptions).filter(opt => !opt.classList.contains('hidden'));
+    }
+
+    function updateDesigActive() {
+        const visible = getVisibleDesigOptions();
+        visible.forEach((opt, idx) => {
+            if (idx === desigActiveIndex) {
+                opt.classList.add('bg-indigo-50', 'text-indigo-700');
+                opt.scrollIntoView({ block: 'nearest' });
+            } else {
+                opt.classList.remove('bg-indigo-50', 'text-indigo-700');
+            }
+        });
+    }
+
+    if (desigInput.value.trim()) {
+        desigClearBtn.classList.remove('hidden');
+    }
+
+    desigInput.addEventListener('focus', showDesigDropdown);
+    desigInput.addEventListener('click', showDesigDropdown);
+    desigChevronBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        if (desigDropdown.classList.contains('hidden')) {
+            showDesigDropdown();
+            desigInput.focus();
+        } else {
+            hideDesigDropdown();
+        }
+    });
+
+    desigInput.addEventListener('input', function () {
+        desigClearBtn.classList.toggle('hidden', !desigInput.value);
+        showDesigDropdown();
+        filterDesigOptions();
+        desigActiveIndex = -1;
+    });
+
+    desigInput.addEventListener('keydown', function (e) {
+        const visible = getVisibleDesigOptions();
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (desigDropdown.classList.contains('hidden')) {
+                showDesigDropdown();
+            } else if (visible.length > 0) {
+                desigActiveIndex = (desigActiveIndex + 1) % visible.length;
+                updateDesigActive();
+            }
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (visible.length > 0) {
+                desigActiveIndex = (desigActiveIndex - 1 + visible.length) % visible.length;
+                updateDesigActive();
+            }
+        } else if (e.key === 'Enter') {
+            if (!desigDropdown.classList.contains('hidden') && desigActiveIndex >= 0 && visible[desigActiveIndex]) {
+                e.preventDefault();
+                selectDesig(visible[desigActiveIndex]);
+            }
+        } else if (e.key === 'Escape') {
+            hideDesigDropdown();
+        }
+    });
+
+    desigOptions.forEach(opt => {
+        opt.addEventListener('mousedown', function (e) {
+            e.preventDefault();
+            selectDesig(opt);
+        });
+    });
+
+    desigClearBtn.addEventListener('click', function (e) {
+        e.preventDefault();
+        clearDesig();
+    });
+
+    /* ==========================================================
+       3. GLOBAL CLICK OUTSIDE HANDLER
+       ========================================================== */
+    document.addEventListener('click', function (e) {
+        const deptBox = document.getElementById('departmentCombobox');
+        if (deptBox && !deptBox.contains(e.target)) {
+            hideDeptDropdown();
+        }
+
+        const desigBox = document.getElementById('designationCombobox');
+        if (desigBox && !desigBox.contains(e.target)) {
+            hideDesigDropdown();
+        }
+    });
+});
+</script>
+{% endblock %}
