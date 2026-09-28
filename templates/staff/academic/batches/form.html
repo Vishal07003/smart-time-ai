@@ -1,0 +1,118 @@
+{% extends "staff/base.html" %}
+
+{% block title %}
+    {% if is_edit %}Edit Batch {{ batch.name }} | Academic Management | SMART-TIME AI{% else %}Add Practical Batch | Academic Management | SMART-TIME AI{% endif %}
+{% endblock %}
+{% block header_title %}
+    {% if is_edit %}Edit Practical Batch{% else %}Add Practical Batch{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto w-full space-y-6">
+    <!-- Breadcrumb & Top Bar -->
+    <div class="flex items-center justify-between">
+        <a href="{% url 'staff:academic_batches' %}" class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-indigo-600 transition">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to Batches</span>
+        </a>
+    </div>
+
+    <!-- Header Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+            <div class="h-12 w-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center font-bold text-indigo-700 text-base flex-shrink-0">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600">
+                    <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                </svg>
+            </div>
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 tracking-tight">
+                    {% if is_edit %}Edit Practical Batch: {{ batch.name }}{% else %}Create New Practical Batch{% endif %}
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    {% if is_edit %}Update batch name or practical lab seating capacity.{% else %}Attach a practical/lab batch to a division within the academic structure.{% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 sm:p-8 shadow-xs">
+        <form method="post" novalidate class="space-y-6" id="batchForm">
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+                <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-1">
+                    {% for error in form.non_field_errors %}
+                        <div class="flex items-center gap-2">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-rose-600 flex-shrink-0"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                            <span>{{ error }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="space-y-4">
+                <!-- Division Selection -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Division <span class="text-rose-500">*</span>
+                    </label>
+                    {{ form.division }}
+                    {% if form.division.errors %}
+                        <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.division.errors.0 }}</p>
+                    {% endif %}
+                    <p class="text-[11px] text-slate-400 mt-1">Parent division offering this practical batch.</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Batch Name Field -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Batch Name / Code <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.name }}
+                        {% if form.name.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.name.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">e.g., P1, P2, Batch A, B1</p>
+                    </div>
+
+                    <!-- Capacity Field -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Capacity (Students) <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.capacity }}
+                        {% if form.capacity.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.capacity.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Maximum practical batch size (e.g., 20 - 30)</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Hierarchy Context Card -->
+            <div class="rounded-xl bg-indigo-50/60 border border-indigo-100 p-4 text-xs text-indigo-900 flex items-start gap-2.5">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600 shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+                <div>
+                    <span class="font-semibold text-indigo-950">Academic Hierarchy:</span> Practical Batches are sub-cohorts of Divisions (e.g. Lab batch P1 inside Division A of Semester 3, B.Tech Computer Engineering).
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                <a href="{% url 'staff:academic_batches' %}" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+                    Cancel
+                </a>
+                <button type="submit" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150">
+                    {% if is_edit %}Save Changes{% else %}Create Practical Batch{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
