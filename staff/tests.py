@@ -1336,4 +1336,492 @@ class StaffTeacherManagementWebTests(TestCase):
         self.assertContains(response, "Inactive")
 
 
+# ==================== PHASE 16D: STUDENT MANAGEMENT TESTS ====================
+
+from academics.models import Department, Division, PracticalBatch, Program, Semester
+from accounts.models import StudentProfile
+
+
+class StaffStudentManagementWebTests(TestCase):
+    """
+    Focused Phase 16D Test Suite: Staff Web Student Management.
+    Tests authorization, list, search, filter, pagination, create, sequential code,
+    validation, division/batch dependency, edit, detail, toggle-status, and security.
+    """
+
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+
+        # 1. Users
+        self.staff_user = User.objects.create_user(
+            username="staff_officer",
+            email="staff.officer@smarttime.ai",
+            password="StaffPassword123!",
+            role=User.Role.STAFF,
+            first_name="Staff",
+            last_name="Officer",
+        )
+        self.teacher_user = User.objects.create_user(
+            username="teacher_guest",
+            email="teacher.guest@smarttime.ai",
+            password="TeacherPassword123!",
+            role=User.Role.TEACHER,
+            first_name="Teacher",
+            last_name="Guest",
+        )
+        self.student_user = User.objects.create_user(
+            username="student_guest",
+            email="student.guest@smarttime.ai",
+            password="StudentPassword123!",
+            role=User.Role.STUDENT,
+            first_name="Student",
+            last_name="Guest",
+        )
+
+        # 2. Academic structure: Department -> Program -> Semester -> Division -> Batch
+        self.dept = Department.objects.create(name="Computer Applications", code="MCA")
+        self.program = Program.objects.create(
+            department=self.dept,
+            name="Master of Computer Applications",
+            code="MCA-PG",
+            type=Program.Type.POSTGRADUATE,
+            duration_years=2,
+        )
+        self.semester = Semester.objects.create(
+            program=self.program,
+            number=1,
+            academic_year="2025-2026",
+        )
+        self.div_a = Division.objects.create(
+            semester=self.semester,
+            name="A",
+            capacity=60,
+        )
+        self.div_b = Division.objects.create(
+            semester=self.semester,
+            name="B",
+            capacity=60,
+        )
+        self.batch_a1 = PracticalBatch.objects.create(
+            division=self.div_a,
+            name="Batch A1",
+            capacity=20,
+        )
+        self.batch_a2 = PracticalBatch.objects.create(
+            division=self.div_a,
+            name="Batch A2",
+            capacity=20,
+        )
+        self.batch_b1 = PracticalBatch.objects.create(
+            division=self.div_b,
+            name="Batch B1",
+            capacity=20,
+        )
+
+        # 3. Create initial students
+        self.u1 = User.objects.create_user(
+            username="rahul_sharma",
+            email="rahul.sharma@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+            first_name="Rahul",
+            last_name="Sharma",
+            phone="9876543210",
+        )
+        self.stu1 = StudentProfile.objects.create(
+            user=self.u1,
+            student_code="STU-001",
+            roll_number="101",
+            division=self.div_a,
+            batch=self.batch_a1,
+            admission_year=2024,
+            status=StudentProfile.Status.ACTIVE,
+        )
+
+        self.u2 = User.objects.create_user(
+            username="priya_patel",
+            email="priya.patel@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+            first_name="Priya",
+            last_name="Patel",
+            phone="9876543211",
+        )
+        self.stu2 = StudentProfile.objects.create(
+            user=self.u2,
+            student_code="STU-002",
+            roll_number="102",
+            division=self.div_a,
+            batch=self.batch_a2,
+            admission_year=2023,
+            status=StudentProfile.Status.INACTIVE,
+        )
+
+        # URLs
+        self.students_list_url = reverse("staff:students")
+        self.student_create_url = reverse("staff:student_create")
+        self.student_detail_url = reverse("staff:student_detail", kwargs={"id": self.stu1.id})
+        self.student_edit_url = reverse("staff:student_edit", kwargs={"id": self.stu1.id})
+        self.student_toggle_url = reverse("staff:student_toggle_status", kwargs={"id": self.stu1.id})
+
+    def _get_csrf_token(self, url):
+        res = self.client.get(url)
+        return res.cookies["csrftoken"].value
+
+    def test_01_staff_can_access_list(self):
+        """1. Staff can access list."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Students")
+        self.assertContains(response, "Manage student profiles, divisions and batches")
+
+    def test_02_unauthenticated_redirects(self):
+        """2. Unauthenticated redirects to /staff/login/."""
+        response = self.client.get(self.students_list_url)
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("staff:login"), response.url)
+
+    def test_03_teacher_gets_403(self):
+        """3. Teacher gets 403 Forbidden."""
+        self.client.force_login(self.teacher_user)
+        response = self.client.get(self.students_list_url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_04_student_gets_403(self):
+        """4. Student gets 403 Forbidden."""
+        self.client.force_login(self.student_user)
+        response = self.client.get(self.students_list_url)
+        self.assertEqual(response.status_code, 403)
+
+    def test_05_list_renders(self):
+        """5. List renders with student codes, roll numbers, and division badges."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "STU-001")
+        self.assertContains(response, "STU-002")
+        self.assertContains(response, "Rahul Sharma")
+        self.assertContains(response, "Priya Patel")
+        self.assertContains(response, "+ Add Student")
+
+    def test_06_search_by_name(self):
+        """6. Search by name works case-insensitively."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"q": "rahul"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Rahul Sharma")
+        self.assertNotContains(response, "Priya Patel")
+
+    def test_07_search_by_email(self):
+        """7. Search by email."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"q": "priya.patel@smarttime.ai"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Priya Patel")
+        self.assertNotContains(response, "Rahul Sharma")
+
+    def test_08_search_by_student_code(self):
+        """8. Search by student code."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"q": "STU-001"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Rahul Sharma")
+        self.assertNotContains(response, "Priya Patel")
+
+    def test_09_search_by_roll_number(self):
+        """9. Search by roll number."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"q": "102"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Priya Patel")
+        self.assertNotContains(response, "Rahul Sharma")
+
+    def test_10_division_filter(self):
+        """10. Division filter filters by division."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"division": str(self.div_a.id)})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "STU-001")
+
+        # Empty division filter returns 0
+        response_empty = self.client.get(self.students_list_url, {"division": str(self.div_b.id)})
+        self.assertEqual(response_empty.status_code, 200)
+        self.assertContains(response_empty, "No students found")
+
+    def test_11_batch_filter(self):
+        """11. Batch filter."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"batch": str(self.batch_a1.id)})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Rahul Sharma")
+        self.assertNotContains(response, "Priya Patel")
+
+    def test_12_status_filter(self):
+        """12. Status filter."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"status": "ACTIVE"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Rahul Sharma")
+        self.assertNotContains(response, "Priya Patel")
+
+    def test_13_admission_year_filter(self):
+        """13. Admission year filter."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url, {"admission_year": "2024"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Rahul Sharma")
+        self.assertNotContains(response, "Priya Patel")
+
+    def test_14_pagination(self):
+        """14. Pagination with 20 items per page."""
+        self.client.force_login(self.staff_user)
+        # Create 22 extra students
+        for i in range(3, 25):
+            u = User.objects.create_user(
+                username=f"student_{i}",
+                email=f"student_{i}@smarttime.ai",
+                password="Password123!",
+                role=User.Role.STUDENT,
+                first_name=f"Student{i}",
+            )
+            StudentProfile.objects.create(
+                user=u,
+                student_code=f"STU-{i:03d}",
+                roll_number=f"{200+i}",
+                division=self.div_a,
+                admission_year=2024,
+            )
+        response = self.client.get(self.students_list_url, {"page": "2"})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["page_obj"].has_previous())
+
+    def test_15_add_student(self):
+        """15. Add student creates user and student profile."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_create_url)
+        payload = {
+            "username": "amit_verma",
+            "email": "amit.verma@smarttime.ai",
+            "first_name": "Amit",
+            "last_name": "Verma",
+            "phone": "9876543299",
+            "password": "Password123!Pass",
+            "confirm_password": "Password123!Pass",
+            "division": str(self.div_a.id),
+            "batch": str(self.batch_a1.id),
+            "roll_number": "105",
+            "admission_year": 2024,
+            "status": "ACTIVE",
+            "csrfmiddlewaretoken": csrf,
+        }
+        response = self.client.post(self.student_create_url, payload)
+        self.assertEqual(response.status_code, 302)
+        new_student = StudentProfile.objects.get(user__username="amit_verma")
+        self.assertEqual(new_student.roll_number, "105")
+        self.assertEqual(new_student.student_code, "STU-003")
+
+    def test_16_student_code_auto_generation(self):
+        """16. Student code is auto-generated server-side sequentially."""
+        from staff.utils import generate_next_student_code
+        self.assertEqual(generate_next_student_code(), "STU-003")
+
+    def test_17_duplicate_student_code_rejected(self):
+        """17. Client cannot forge existing student code."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_create_url)
+        payload = {
+            "username": "forger_user",
+            "email": "forger@smarttime.ai",
+            "first_name": "Forger",
+            "last_name": "User",
+            "password": "Password123!Pass",
+            "confirm_password": "Password123!Pass",
+            "student_code": "STU-001",  # client attempts to force STU-001
+            "division": str(self.div_a.id),
+            "roll_number": "199",
+            "admission_year": 2024,
+            "csrfmiddlewaretoken": csrf,
+        }
+        # Server must override it with STU-003 rather than corrupting data
+        response = self.client.post(self.student_create_url, payload)
+        self.assertEqual(response.status_code, 302)
+        created = StudentProfile.objects.get(user__username="forger_user")
+        self.assertEqual(created.student_code, "STU-003")
+
+    def test_18_duplicate_roll_number_within_division_rejected(self):
+        """18. Duplicate roll number within division rejected."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_create_url)
+        payload = {
+            "username": "dup_roll_user",
+            "email": "dup.roll@smarttime.ai",
+            "password": "Password123!Pass",
+            "confirm_password": "Password123!Pass",
+            "division": str(self.div_a.id),
+            "roll_number": "101",  # STU-001 already has 101 in div_a
+            "admission_year": 2024,
+            "csrfmiddlewaretoken": csrf,
+        }
+        response = self.client.post(self.student_create_url, payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["form"].errors.get("roll_number"))
+
+    def test_19_valid_division_batch_accepted(self):
+        """19. Valid division and batch combination is accepted."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_create_url)
+        payload = {
+            "username": "div_batch_ok",
+            "email": "div.batch.ok@smarttime.ai",
+            "password": "Password123!Pass",
+            "confirm_password": "Password123!Pass",
+            "division": str(self.div_b.id),
+            "batch": str(self.batch_b1.id),
+            "roll_number": "201",
+            "admission_year": 2024,
+            "csrfmiddlewaretoken": csrf,
+        }
+        response = self.client.post(self.student_create_url, payload)
+        self.assertEqual(response.status_code, 302)
+        student = StudentProfile.objects.get(user__username="div_batch_ok")
+        self.assertEqual(student.batch, self.batch_b1)
+
+    def test_20_invalid_division_batch_combination_rejected(self):
+        """20. Invalid division/batch combination rejected."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_create_url)
+        payload = {
+            "username": "mismatch_batch",
+            "email": "mismatch.batch@smarttime.ai",
+            "password": "Password123!Pass",
+            "confirm_password": "Password123!Pass",
+            "division": str(self.div_b.id),
+            "batch": str(self.batch_a1.id),  # batch_a1 belongs to div_a!
+            "roll_number": "202",
+            "admission_year": 2024,
+            "csrfmiddlewaretoken": csrf,
+        }
+        response = self.client.post(self.student_create_url, payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["form"].errors.get("batch"))
+
+    def test_21_edit_student(self):
+        """21. Edit student updates fields and preserves student code."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_edit_url)
+        payload = {
+            "first_name": "Rahul Updated",
+            "last_name": "Sharma",
+            "email": "rahul.updated@smarttime.ai",
+            "phone": "9876543210",
+            "division": str(self.div_a.id),
+            "batch": str(self.batch_a2.id),
+            "roll_number": "101",
+            "admission_year": 2024,
+            "status": "ACTIVE",
+            "csrfmiddlewaretoken": csrf,
+        }
+        response = self.client.post(self.student_edit_url, payload)
+        self.assertEqual(response.status_code, 302)
+        self.stu1.refresh_from_db()
+        self.assertEqual(self.stu1.user.first_name, "Rahul Updated")
+        self.assertEqual(self.stu1.student_code, "STU-001")
+        self.assertEqual(self.stu1.batch, self.batch_a2)
+
+    def test_22_division_change_validates_batch(self):
+        """22. Changing division to one incompatible with the selected batch is rejected."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_edit_url)
+        payload = {
+            "first_name": "Rahul",
+            "last_name": "Sharma",
+            "email": "rahul.sharma@smarttime.ai",
+            "division": str(self.div_b.id),  # change to Div B
+            "batch": str(self.batch_a1.id),  # but keeping Batch A1 (belongs to Div A)
+            "roll_number": "101",
+            "admission_year": 2024,
+            "status": "ACTIVE",
+            "csrfmiddlewaretoken": csrf,
+        }
+        response = self.client.post(self.student_edit_url, payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.context["form"].errors.get("batch"))
+
+    def test_23_student_detail_renders(self):
+        """23. Student detail renders with division, roll number, and student code."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.student_detail_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Rahul Sharma")
+        self.assertContains(response, "STU-001")
+        self.assertContains(response, "Roll #101")
+        self.assertContains(response, "Division A")
+
+    def test_24_activate_deactivate(self):
+        """24. Activate/Deactivate toggles status via POST."""
+        self.client.force_login(self.staff_user)
+        csrf = self._get_csrf_token(self.student_detail_url)
+        self.assertEqual(self.stu1.status, StudentProfile.Status.ACTIVE)
+
+        # Deactivate
+        res_post = self.client.post(self.student_toggle_url, {"csrfmiddlewaretoken": csrf})
+        self.assertEqual(res_post.status_code, 302)
+        self.stu1.refresh_from_db()
+        self.assertEqual(self.stu1.status, StudentProfile.Status.INACTIVE)
+        self.assertFalse(self.stu1.user.is_active)
+
+        # Activate
+        res_post2 = self.client.post(self.student_toggle_url, {"csrfmiddlewaretoken": csrf})
+        self.assertEqual(res_post2.status_code, 302)
+        self.stu1.refresh_from_db()
+        self.assertEqual(self.stu1.status, StudentProfile.Status.ACTIVE)
+        self.assertTrue(self.stu1.user.is_active)
+
+    def test_25_custom_confirmation_modal_used(self):
+        """25. Custom confirmation modal function confirmToggleStatus is present in template."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(self.students_list_url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "confirmToggleStatus")
+        self.assertContains(response, "globalConfirmModal")
+
+    def test_26_no_password_hash_exposed(self):
+        """26. No password or hash is exposed in student detail or edit pages."""
+        self.client.force_login(self.staff_user)
+        detail_res = self.client.get(self.student_detail_url)
+        self.assertNotContains(detail_res, "pbkdf2")
+        self.assertNotContains(detail_res, self.stu1.user.password)
+
+        edit_res = self.client.get(self.student_edit_url)
+        self.assertNotContains(edit_res, "pbkdf2")
+        self.assertNotContains(edit_res, self.stu1.user.password)
+
+    def test_27_csrf_protection(self):
+        """27. CSRF protection blocks requests without valid token."""
+        self.client.force_login(self.staff_user)
+        post_res = self.client.post(self.student_toggle_url, {})
+        self.assertEqual(post_res.status_code, 403)
+
+    def test_28_staff_only_authorization(self):
+        """28. Staff-only authorization across create, edit, toggle routes."""
+        self.client.force_login(self.teacher_user)
+        self.assertEqual(self.client.get(self.student_create_url).status_code, 403)
+        self.assertEqual(self.client.get(self.student_edit_url).status_code, 403)
+        self.assertEqual(self.client.get(self.student_detail_url).status_code, 403)
+        self.assertEqual(self.client.post(self.student_toggle_url, {}).status_code, 403)
+
+    def test_29_existing_teacher_tests_still_pass(self):
+        """29. Existing teacher routes remain functional."""
+        self.client.force_login(self.staff_user)
+        response = self.client.get(reverse("staff:teachers"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_30_existing_staff_authentication_tests_still_pass(self):
+        """30. Existing staff auth routes remain functional."""
+        response = self.client.get(reverse("staff:login"))
+        self.assertEqual(response.status_code, 200)
+
+
+
 
