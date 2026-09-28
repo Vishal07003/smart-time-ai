@@ -1,0 +1,895 @@
+{% extends "staff/base.html" %}
+
+{% block title %}Create Academic Structure | Academic Management | SMART-TIME AI{% endblock %}
+{% block header_title %}Create Academic Structure{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-5xl mx-auto w-full pb-16">
+    <!-- Top Action & Title Bar -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center gap-2 text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1">
+                <a href="{% url 'staff:academic_departments' %}" class="hover:text-indigo-600 transition">Academic</a>
+                <span>&bull;</span>
+                <span class="text-indigo-600 font-bold">Guided Structure Builder</span>
+            </div>
+            <h2 class="text-lg sm:text-xl font-bold text-slate-900 tracking-tight leading-snug">
+                Create Academic Structure
+            </h2>
+            <p class="text-xs sm:text-sm text-slate-500 mt-0.5">
+                Configure your complete academic hierarchy in one seamless, step-by-step flow.
+            </p>
+        </div>
+        <div class="flex items-center gap-3">
+            <a href="{% url 'staff:academic_departments' %}" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition duration-150">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <line x1="19" y1="12" x2="5" y2="12"></line>
+                    <polyline points="12 19 5 12 12 5"></polyline>
+                </svg>
+                <span>Back to Academic Lists</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Stepper Progress Bar Card -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 p-4 sm:p-6 shadow-xs">
+        <div class="grid grid-cols-5 gap-2 sm:gap-4 relative">
+            <!-- Step 1: Department -->
+            <button type="button" onclick="goToStep(1)" id="stepTab-1" class="flex flex-col items-center text-center group cursor-pointer focus:outline-none">
+                <div id="stepBadge-1" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-indigo-600 text-white shadow-sm ring-4 ring-indigo-50">
+                    1
+                </div>
+                <span id="stepLabel-1" class="mt-2 text-[11px] sm:text-xs font-bold text-indigo-600">Department</span>
+                <span class="hidden sm:inline text-[10px] text-slate-400">Root Node</span>
+            </button>
+
+            <!-- Step 2: Program -->
+            <button type="button" onclick="goToStep(2)" id="stepTab-2" class="flex flex-col items-center text-center group cursor-pointer focus:outline-none">
+                <div id="stepBadge-2" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-slate-100 text-slate-500">
+                    2
+                </div>
+                <span id="stepLabel-2" class="mt-2 text-[11px] sm:text-xs font-medium text-slate-500">Program</span>
+                <span class="hidden sm:inline text-[10px] text-slate-400">Degree / Branch</span>
+            </button>
+
+            <!-- Step 3: Semester -->
+            <button type="button" onclick="goToStep(3)" id="stepTab-3" class="flex flex-col items-center text-center group cursor-pointer focus:outline-none">
+                <div id="stepBadge-3" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-slate-100 text-slate-500">
+                    3
+                </div>
+                <span id="stepLabel-3" class="mt-2 text-[11px] sm:text-xs font-medium text-slate-500">Semester</span>
+                <span class="hidden sm:inline text-[10px] text-slate-400">Term / Year</span>
+            </button>
+
+            <!-- Step 4: Division -->
+            <button type="button" onclick="goToStep(4)" id="stepTab-4" class="flex flex-col items-center text-center group cursor-pointer focus:outline-none">
+                <div id="stepBadge-4" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-slate-100 text-slate-500">
+                    4
+                </div>
+                <span id="stepLabel-4" class="mt-2 text-[11px] sm:text-xs font-medium text-slate-500">Division</span>
+                <span class="hidden sm:inline text-[10px] text-slate-400">Section A/B</span>
+            </button>
+
+            <!-- Step 5: Practical Batch -->
+            <button type="button" onclick="goToStep(5)" id="stepTab-5" class="flex flex-col items-center text-center group cursor-pointer focus:outline-none">
+                <div id="stepBadge-5" class="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-slate-100 text-slate-500">
+                    5
+                </div>
+                <span id="stepLabel-5" class="mt-2 text-[11px] sm:text-xs font-medium text-slate-500">Batch</span>
+                <span class="hidden sm:inline text-[10px] text-slate-400">Optional Lab</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Hierarchy Dynamic Breadcrumb Preview -->
+    <div class="bg-indigo-50/70 border border-indigo-100 rounded-xl px-4 py-3 flex items-center gap-2 overflow-x-auto text-xs text-indigo-950 font-medium">
+        <span class="text-indigo-600 font-bold uppercase tracking-wider text-[10px] flex items-center gap-1.5 flex-shrink-0">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            Active Hierarchy:
+        </span>
+        <span id="crumbDept" class="px-2 py-0.5 rounded bg-white font-semibold text-slate-700 shadow-2xs border border-indigo-100 whitespace-nowrap">Department: None</span>
+        <span class="text-indigo-300 font-bold">&rarr;</span>
+        <span id="crumbProg" class="px-2 py-0.5 rounded bg-white font-semibold text-slate-700 shadow-2xs border border-indigo-100 whitespace-nowrap">Program: None</span>
+        <span class="text-indigo-300 font-bold">&rarr;</span>
+        <span id="crumbSem" class="px-2 py-0.5 rounded bg-white font-semibold text-slate-700 shadow-2xs border border-indigo-100 whitespace-nowrap">Semester: None</span>
+        <span class="text-indigo-300 font-bold">&rarr;</span>
+        <span id="crumbDiv" class="px-2 py-0.5 rounded bg-white font-semibold text-slate-700 shadow-2xs border border-indigo-100 whitespace-nowrap">Division: None</span>
+        <span class="text-indigo-300 font-bold">&rarr;</span>
+        <span id="crumbBatch" class="px-2 py-0.5 rounded bg-white font-semibold text-slate-500 shadow-2xs border border-indigo-100 whitespace-nowrap">Batch: None (Optional)</span>
+    </div>
+
+    <!-- Error Alert Banner -->
+    <div id="wizardErrorBanner" class="hidden rounded-xl bg-rose-50 border border-rose-200 p-4 text-rose-800 text-xs">
+        <div class="flex items-start gap-2.5">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-rose-600 flex-shrink-0 mt-0.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+            <div id="wizardErrorList" class="space-y-1"></div>
+        </div>
+    </div>
+
+    <!-- WIZARD STEP CONTAINERS -->
+    <div class="bg-white rounded-2xl border border-slate-200/80 shadow-xs p-6 sm:p-8">
+
+        <!-- ==================== STEP 1: DEPARTMENT ==================== -->
+        <div id="step-1" class="wizard-step space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div>
+                    <h3 class="text-base font-bold text-slate-900 tracking-tight">Step 1: Department</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Select an existing department or create a brand new department.</p>
+                </div>
+                <div class="inline-flex p-1 rounded-xl bg-slate-100 text-xs font-semibold">
+                    <button type="button" onclick="setMode('dept', 'select')" id="deptModeSelectBtn" class="px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-2xs">Select Existing</button>
+                    <button type="button" onclick="setMode('dept', 'new')" id="deptModeNewBtn" class="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900">Create New</button>
+                </div>
+            </div>
+
+            <!-- Select Existing Department -->
+            <div id="deptSelectBox" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Select Department <span class="text-rose-500">*</span>
+                    </label>
+                    <select id="selectDeptInput" onchange="onDeptSelected()" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white">
+                        <option value="">-- Choose an existing department --</option>
+                    </select>
+                    <p class="text-[11px] text-slate-400 mt-1">Departments loaded from existing records.</p>
+                </div>
+            </div>
+
+            <!-- Create New Department -->
+            <div id="deptNewBox" class="hidden space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Department Name <span class="text-rose-500">*</span>
+                    </label>
+                    <input type="text" id="newDeptName" placeholder="e.g. Computer Science and Engineering" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400">
+                    <p id="errDeptName" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Department Code <span class="text-rose-500">*</span>
+                    </label>
+                    <input type="text" id="newDeptCode" placeholder="e.g. CSE" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400 uppercase">
+                    <p id="errDeptCode" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                    <p class="text-[11px] text-slate-400 mt-1">Unique uppercase abbreviation.</p>
+                </div>
+            </div>
+
+            <!-- Navigation Actions -->
+            <div class="pt-6 border-t border-slate-100 flex items-center justify-between">
+                <div></div>
+                <button type="button" onclick="nextStep(1)" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150 inline-flex items-center gap-2">
+                    <span>Next: Program</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- ==================== STEP 2: PROGRAM ==================== -->
+        <div id="step-2" class="wizard-step hidden space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div>
+                    <h3 class="text-base font-bold text-slate-900 tracking-tight">Step 2: Program</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Select a program under the chosen department, or create a new one.</p>
+                </div>
+                <div class="inline-flex p-1 rounded-xl bg-slate-100 text-xs font-semibold">
+                    <button type="button" onclick="setMode('prog', 'select')" id="progModeSelectBtn" class="px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-2xs">Select Existing</button>
+                    <button type="button" onclick="setMode('prog', 'new')" id="progModeNewBtn" class="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900">Create New</button>
+                </div>
+            </div>
+
+            <!-- Select Existing Program -->
+            <div id="progSelectBox" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Select Program <span class="text-rose-500">*</span>
+                    </label>
+                    <select id="selectProgInput" onchange="onProgSelected()" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white">
+                        <option value="">-- Choose an existing program --</option>
+                    </select>
+                    <p class="text-[11px] text-slate-400 mt-1">Filtered by the selected department.</p>
+                </div>
+            </div>
+
+            <!-- Create New Program -->
+            <div id="progNewBox" class="hidden space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Program Name <span class="text-rose-500">*</span>
+                    </label>
+                    <input type="text" id="newProgName" placeholder="e.g. Bachelor of Technology in Computer Science" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400">
+                    <p id="errProgName" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Program Code <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="text" id="newProgCode" placeholder="e.g. BTECH-CS" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400 uppercase">
+                        <p id="errProgCode" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Duration in Years <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="number" id="newProgDuration" value="4" min="1" max="10" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400">
+                        <p id="errProgDuration" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Actions -->
+            <div class="pt-6 border-t border-slate-100 flex items-center justify-between">
+                <button type="button" onclick="goToStep(1)" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Back</span>
+                </button>
+                <button type="button" onclick="nextStep(2)" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150 inline-flex items-center gap-2">
+                    <span>Next: Semester</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- ==================== STEP 3: SEMESTER ==================== -->
+        <div id="step-3" class="wizard-step hidden space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div>
+                    <h3 class="text-base font-bold text-slate-900 tracking-tight">Step 3: Semester</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Select an existing semester under the program, or register a new semester.</p>
+                </div>
+                <div class="inline-flex p-1 rounded-xl bg-slate-100 text-xs font-semibold">
+                    <button type="button" onclick="setMode('sem', 'select')" id="semModeSelectBtn" class="px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-2xs">Select Existing</button>
+                    <button type="button" onclick="setMode('sem', 'new')" id="semModeNewBtn" class="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900">Create New</button>
+                </div>
+            </div>
+
+            <!-- Select Existing Semester -->
+            <div id="semSelectBox" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Select Semester <span class="text-rose-500">*</span>
+                    </label>
+                    <select id="selectSemInput" onchange="onSemSelected()" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white">
+                        <option value="">-- Choose an existing semester --</option>
+                    </select>
+                    <p class="text-[11px] text-slate-400 mt-1">Filtered by the selected program.</p>
+                </div>
+            </div>
+
+            <!-- Create New Semester -->
+            <div id="semNewBox" class="hidden space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Semester Number <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="number" id="newSemNumber" value="1" min="1" max="20" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400">
+                        <p id="errSemNumber" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                        <p class="text-[11px] text-slate-400 mt-1">e.g. 1 to 8 for B.Tech.</p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Academic Year <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="text" id="newSemYear" placeholder="2026-2027" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400">
+                        <p id="errSemYear" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                        <p class="text-[11px] text-slate-400 mt-1">Format: YYYY-YYYY.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Actions -->
+            <div class="pt-6 border-t border-slate-100 flex items-center justify-between">
+                <button type="button" onclick="goToStep(2)" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Back</span>
+                </button>
+                <button type="button" onclick="nextStep(3)" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150 inline-flex items-center gap-2">
+                    <span>Next: Division</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- ==================== STEP 4: DIVISION ==================== -->
+        <div id="step-4" class="wizard-step hidden space-y-6">
+            <div class="flex items-center justify-between border-b border-slate-100 pb-4">
+                <div>
+                    <h3 class="text-base font-bold text-slate-900 tracking-tight">Step 4: Division</h3>
+                    <p class="text-xs text-slate-500 mt-0.5">Select a division or create a new class section under this semester.</p>
+                </div>
+                <div class="inline-flex p-1 rounded-xl bg-slate-100 text-xs font-semibold">
+                    <button type="button" onclick="setMode('div', 'select')" id="divModeSelectBtn" class="px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-2xs">Select Existing</button>
+                    <button type="button" onclick="setMode('div', 'new')" id="divModeNewBtn" class="px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900">Create New</button>
+                </div>
+            </div>
+
+            <!-- Select Existing Division -->
+            <div id="divSelectBox" class="space-y-4">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Select Division <span class="text-rose-500">*</span>
+                    </label>
+                    <select id="selectDivInput" onchange="onDivSelected()" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white">
+                        <option value="">-- Choose an existing division --</option>
+                    </select>
+                    <p class="text-[11px] text-slate-400 mt-1">Filtered by the selected semester.</p>
+                </div>
+            </div>
+
+            <!-- Create New Division -->
+            <div id="divNewBox" class="hidden space-y-4">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Division Name / Code <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="text" id="newDivName" placeholder="e.g. A" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400 uppercase">
+                        <p id="errDivName" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Student Capacity <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="number" id="newDivCapacity" value="60" min="1" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400">
+                        <p id="errDivCapacity" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Actions -->
+            <div class="pt-6 border-t border-slate-100 flex items-center justify-between">
+                <button type="button" onclick="goToStep(3)" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Back</span>
+                </button>
+                <button type="button" onclick="nextStep(4)" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150 inline-flex items-center gap-2">
+                    <span>Next: Practical Batch</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"></polyline></svg>
+                </button>
+            </div>
+        </div>
+
+        <!-- ==================== STEP 5: PRACTICAL BATCH & REVIEW ==================== -->
+        <div id="step-5" class="wizard-step hidden space-y-6">
+            <div class="border-b border-slate-100 pb-4">
+                <h3 class="text-base font-bold text-slate-900 tracking-tight">Step 5: Practical Batch (Optional) &amp; Review</h3>
+                <p class="text-xs text-slate-500 mt-0.5">Attach a lab batch to this division or finish the structure without one.</p>
+            </div>
+
+            <!-- Optional Batch Toggle -->
+            <div class="rounded-xl border border-slate-200 p-4 bg-slate-50/50 flex items-center justify-between">
+                <div>
+                    <span class="text-xs font-bold text-slate-800">Add a Practical Lab Batch now?</span>
+                    <p class="text-[11px] text-slate-500 mt-0.5">You can skip this if you don't require lab batches for this division.</p>
+                </div>
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" id="batchToggle" onchange="toggleBatchCreation(this.checked)" class="sr-only peer">
+                    <div class="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                </label>
+            </div>
+
+            <!-- Practical Batch Input Fields -->
+            <div id="batchInputSection" class="hidden space-y-4 p-4 rounded-xl border border-indigo-100 bg-indigo-50/30">
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Batch Name / Code <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="text" id="newBatchName" placeholder="e.g. P1" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400 uppercase">
+                        <p id="errBatchName" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Batch Student Capacity <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="number" id="newBatchCapacity" value="30" min="1" class="w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition bg-white placeholder-slate-400">
+                        <p id="errBatchCapacity" class="text-[11px] text-rose-600 mt-1 hidden"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Complete Hierarchy Review Card -->
+            <div class="rounded-xl border border-slate-200/80 bg-slate-50 p-5 space-y-3">
+                <div class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="text-indigo-600"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path><polyline points="22 4 12 14.01 9 11.01"></polyline></svg>
+                    Summary of Academic Hierarchy to Create / Link:
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                    <div class="bg-white p-3 rounded-lg border border-slate-200">
+                        <span class="text-[10px] text-slate-400 uppercase font-bold block">1. Department</span>
+                        <span id="revDept" class="font-bold text-slate-900 mt-0.5 block">-</span>
+                        <span id="revDeptType" class="text-[10px] text-indigo-600 font-semibold block mt-1">Existing</span>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg border border-slate-200">
+                        <span class="text-[10px] text-slate-400 uppercase font-bold block">2. Program</span>
+                        <span id="revProg" class="font-bold text-slate-900 mt-0.5 block">-</span>
+                        <span id="revProgType" class="text-[10px] text-indigo-600 font-semibold block mt-1">Existing</span>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg border border-slate-200">
+                        <span class="text-[10px] text-slate-400 uppercase font-bold block">3. Semester</span>
+                        <span id="revSem" class="font-bold text-slate-900 mt-0.5 block">-</span>
+                        <span id="revSemType" class="text-[10px] text-indigo-600 font-semibold block mt-1">Existing</span>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg border border-slate-200">
+                        <span class="text-[10px] text-slate-400 uppercase font-bold block">4. Division</span>
+                        <span id="revDiv" class="font-bold text-slate-900 mt-0.5 block">-</span>
+                        <span id="revDivType" class="text-[10px] text-indigo-600 font-semibold block mt-1">Existing</span>
+                    </div>
+                    <div class="bg-white p-3 rounded-lg border border-slate-200">
+                        <span class="text-[10px] text-slate-400 uppercase font-bold block">5. Practical Batch</span>
+                        <span id="revBatch" class="font-bold text-slate-900 mt-0.5 block">None</span>
+                        <span id="revBatchType" class="text-[10px] text-slate-400 font-semibold block mt-1">Skipped</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation Actions -->
+            <div class="pt-6 border-t border-slate-100 flex items-center justify-between">
+                <button type="button" onclick="goToStep(4)" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition inline-flex items-center gap-1.5">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                    <span>Back</span>
+                </button>
+                <button type="button" id="submitWizardBtn" onclick="submitAcademicStructure()" class="px-6 py-2.5 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-semibold shadow-xs transition duration-150 inline-flex items-center gap-2">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                    <span>Confirm &amp; Create Structure</span>
+                </button>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+{{ hierarchy_json|json_script:"hierarchyData" }}
+
+<script>
+    // State
+    let currentStep = 1;
+    let hierarchy = JSON.parse(document.getElementById('hierarchyData').textContent || '[]');
+
+    let wizardState = {
+        dept_mode: 'select',
+        dept_id: '',
+        dept_data: { name: '', code: '' },
+
+        prog_mode: 'select',
+        prog_id: '',
+        prog_data: { name: '', code: '', duration_years: 4 },
+
+        sem_mode: 'select',
+        sem_id: '',
+        sem_data: { number: 1, academic_year: '' },
+
+        div_mode: 'select',
+        div_id: '',
+        div_data: { name: '', capacity: 60 },
+
+        batch_create: false,
+        batch_data: { name: '', capacity: 30 }
+    };
+
+    document.addEventListener('DOMContentLoaded', function() {
+        populateDeptSelect();
+        updateCrumbDisplay();
+    });
+
+    function setMode(stage, mode) {
+        wizardState[stage + '_mode'] = mode;
+        const selectBtn = document.getElementById(stage + 'ModeSelectBtn');
+        const newBtn = document.getElementById(stage + 'ModeNewBtn');
+        const selectBox = document.getElementById(stage + 'SelectBox');
+        const newBox = document.getElementById(stage + 'NewBox');
+
+        if (mode === 'select') {
+            selectBtn.className = 'px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-2xs';
+            newBtn.className = 'px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900';
+            selectBox.classList.remove('hidden');
+            newBox.classList.add('hidden');
+        } else {
+            selectBtn.className = 'px-3 py-1.5 rounded-lg text-slate-600 hover:text-slate-900';
+            newBtn.className = 'px-3 py-1.5 rounded-lg bg-white text-slate-900 shadow-2xs';
+            selectBox.classList.add('hidden');
+            newBox.classList.remove('hidden');
+        }
+        updateCrumbDisplay();
+    }
+
+    function populateDeptSelect() {
+        const select = document.getElementById('selectDeptInput');
+        select.innerHTML = '<option value="">-- Choose an existing department --</option>';
+        hierarchy.forEach(d => {
+            const opt = document.createElement('option');
+            opt.value = d.id;
+            opt.textContent = `${d.name} (${d.code})`;
+            select.appendChild(opt);
+        });
+    }
+
+    function onDeptSelected() {
+        const deptId = document.getElementById('selectDeptInput').value;
+        wizardState.dept_id = deptId;
+        // Cascade reset children
+        wizardState.prog_id = '';
+        wizardState.sem_id = '';
+        wizardState.div_id = '';
+        populateProgramSelect();
+        updateCrumbDisplay();
+    }
+
+    function populateProgramSelect() {
+        const select = document.getElementById('selectProgInput');
+        select.innerHTML = '<option value="">-- Choose an existing program --</option>';
+
+        if (!wizardState.dept_id) return;
+        const dept = hierarchy.find(d => d.id === wizardState.dept_id);
+        if (dept && dept.programs) {
+            dept.programs.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = `${p.name} (${p.code})`;
+                select.appendChild(opt);
+            });
+        }
+    }
+
+    function onProgSelected() {
+        const progId = document.getElementById('selectProgInput').value;
+        wizardState.prog_id = progId;
+        // Cascade reset children
+        wizardState.sem_id = '';
+        wizardState.div_id = '';
+        populateSemesterSelect();
+        updateCrumbDisplay();
+    }
+
+    function populateSemesterSelect() {
+        const select = document.getElementById('selectSemInput');
+        select.innerHTML = '<option value="">-- Choose an existing semester --</option>';
+
+        if (!wizardState.dept_id || !wizardState.prog_id) return;
+        const dept = hierarchy.find(d => d.id === wizardState.dept_id);
+        if (!dept) return;
+        const prog = dept.programs.find(p => p.id === wizardState.prog_id);
+        if (prog && prog.semesters) {
+            prog.semesters.forEach(s => {
+                const opt = document.createElement('option');
+                opt.value = s.id;
+                opt.textContent = `Semester ${s.number} (${s.academic_year})`;
+                select.appendChild(opt);
+            });
+        }
+    }
+
+    function onSemSelected() {
+        const semId = document.getElementById('selectSemInput').value;
+        wizardState.sem_id = semId;
+        wizardState.div_id = '';
+        populateDivisionSelect();
+        updateCrumbDisplay();
+    }
+
+    function populateDivisionSelect() {
+        const select = document.getElementById('selectDivInput');
+        select.innerHTML = '<option value="">-- Choose an existing division --</option>';
+
+        if (!wizardState.dept_id || !wizardState.prog_id || !wizardState.sem_id) return;
+        const dept = hierarchy.find(d => d.id === wizardState.dept_id);
+        if (!dept) return;
+        const prog = dept.programs.find(p => p.id === wizardState.prog_id);
+        if (!prog) return;
+        const sem = prog.semesters.find(s => s.id === wizardState.sem_id);
+        if (sem && sem.divisions) {
+            sem.divisions.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.id;
+                opt.textContent = `Division ${d.name} (Cap: ${d.capacity})`;
+                select.appendChild(opt);
+            });
+        }
+    }
+
+    function onDivSelected() {
+        wizardState.div_id = document.getElementById('selectDivInput').value;
+        updateCrumbDisplay();
+    }
+
+    function toggleBatchCreation(checked) {
+        wizardState.batch_create = checked;
+        const section = document.getElementById('batchInputSection');
+        if (checked) {
+            section.classList.remove('hidden');
+        } else {
+            section.classList.add('hidden');
+        }
+        updateCrumbDisplay();
+        updateReviewSummary();
+    }
+
+    function hideErrors() {
+        document.getElementById('wizardErrorBanner').classList.add('hidden');
+        document.getElementById('wizardErrorList').innerHTML = '';
+        ['DeptName', 'DeptCode', 'ProgName', 'ProgCode', 'ProgDuration', 'SemNumber', 'SemYear', 'DivName', 'DivCapacity', 'BatchName', 'BatchCapacity'].forEach(id => {
+            const el = document.getElementById('err' + id);
+            if (el) el.classList.add('hidden');
+        });
+    }
+
+    function showErrors(errMap) {
+        const banner = document.getElementById('wizardErrorBanner');
+        const list = document.getElementById('wizardErrorList');
+        list.innerHTML = '';
+
+        for (const [key, msg] of Object.entries(errMap)) {
+            const row = document.createElement('div');
+            row.textContent = `• ${msg}`;
+            list.appendChild(row);
+        }
+        banner.classList.remove('hidden');
+        window.scrollTo({ top: banner.offsetTop - 100, behavior: 'smooth' });
+    }
+
+    function validateStep(step) {
+        hideErrors();
+        let errors = {};
+
+        if (step === 1) {
+            if (wizardState.dept_mode === 'select') {
+                if (!document.getElementById('selectDeptInput').value) {
+                    errors['dept'] = 'Please select an existing department, or switch to Create New.';
+                }
+            } else {
+                const name = document.getElementById('newDeptName').value.trim();
+                const code = document.getElementById('newDeptCode').value.trim();
+                if (!name) errors['dept_name'] = 'Department name is required.';
+                if (!code) errors['dept_code'] = 'Department code is required.';
+                wizardState.dept_data.name = name;
+                wizardState.dept_data.code = code;
+            }
+        } else if (step === 2) {
+            if (wizardState.prog_mode === 'select') {
+                if (!document.getElementById('selectProgInput').value) {
+                    errors['prog'] = 'Please select a program, or switch to Create New.';
+                }
+            } else {
+                const name = document.getElementById('newProgName').value.trim();
+                const code = document.getElementById('newProgCode').value.trim();
+                const dur = parseInt(document.getElementById('newProgDuration').value, 10);
+                if (!name) errors['prog_name'] = 'Program name is required.';
+                if (!code) errors['prog_code'] = 'Program code is required.';
+                if (isNaN(dur) || dur < 1 || dur > 10) errors['prog_dur'] = 'Duration must be between 1 and 10 years.';
+                wizardState.prog_data.name = name;
+                wizardState.prog_data.code = code;
+                wizardState.prog_data.duration_years = dur;
+            }
+        } else if (step === 3) {
+            if (wizardState.sem_mode === 'select') {
+                if (!document.getElementById('selectSemInput').value) {
+                    errors['sem'] = 'Please select a semester, or switch to Create New.';
+                }
+            } else {
+                const num = parseInt(document.getElementById('newSemNumber').value, 10);
+                const year = document.getElementById('newSemYear').value.trim();
+                if (isNaN(num) || num < 1) errors['sem_num'] = 'Valid semester number required.';
+                if (!year) errors['sem_year'] = 'Academic year (e.g. 2026-2027) is required.';
+                wizardState.sem_data.number = num;
+                wizardState.sem_data.academic_year = year;
+            }
+        } else if (step === 4) {
+            if (wizardState.div_mode === 'select') {
+                if (!document.getElementById('selectDivInput').value) {
+                    errors['div'] = 'Please select a division, or switch to Create New.';
+                }
+            } else {
+                const name = document.getElementById('newDivName').value.trim();
+                const cap = parseInt(document.getElementById('newDivCapacity').value, 10);
+                if (!name) errors['div_name'] = 'Division name is required.';
+                if (isNaN(cap) || cap < 1) errors['div_cap'] = 'Student capacity must be greater than 0.';
+                wizardState.div_data.name = name;
+                wizardState.div_data.capacity = cap;
+            }
+        }
+
+        if (Object.keys(errors).length > 0) {
+            showErrors(errors);
+            return false;
+        }
+        return true;
+    }
+
+    function goToStep(step) {
+        if (step > currentStep) {
+            // Validate all previous steps
+            for (let s = currentStep; s < step; s++) {
+                if (!validateStep(s)) return;
+            }
+        } else {
+            hideErrors();
+        }
+
+        // Hide all step sections
+        for (let s = 1; s <= 5; s++) {
+            const stepEl = document.getElementById('step-' + s);
+            const badgeEl = document.getElementById('stepBadge-' + s);
+            const labelEl = document.getElementById('stepLabel-' + s);
+
+            if (stepEl) stepEl.classList.add('hidden');
+
+            if (badgeEl && labelEl) {
+                if (s === step) {
+                    badgeEl.className = 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-indigo-600 text-white shadow-sm ring-4 ring-indigo-50';
+                    labelEl.className = 'mt-2 text-[11px] sm:text-xs font-bold text-indigo-600';
+                } else if (s < step) {
+                    badgeEl.className = 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-emerald-500 text-white';
+                    badgeEl.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>';
+                    labelEl.className = 'mt-2 text-[11px] sm:text-xs font-semibold text-emerald-600';
+                } else {
+                    badgeEl.className = 'w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center font-bold text-xs sm:text-sm transition-all duration-200 bg-slate-100 text-slate-500';
+                    badgeEl.textContent = s;
+                    labelEl.className = 'mt-2 text-[11px] sm:text-xs font-medium text-slate-500';
+                }
+            }
+        }
+
+        currentStep = step;
+        const currentStepEl = document.getElementById('step-' + step);
+        if (currentStepEl) currentStepEl.classList.remove('hidden');
+
+        updateCrumbDisplay();
+        if (step === 5) updateReviewSummary();
+    }
+
+    function nextStep(current) {
+        if (!validateStep(current)) return;
+        goToStep(current + 1);
+    }
+
+    function updateCrumbDisplay() {
+        // Dept
+        const crumbDept = document.getElementById('crumbDept');
+        if (wizardState.dept_mode === 'select') {
+            const sel = document.getElementById('selectDeptInput');
+            crumbDept.textContent = sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].text : 'Dept: None';
+        } else {
+            crumbDept.textContent = wizardState.dept_data.name ? `Dept: ${wizardState.dept_data.name} (New)` : 'Dept: (New)';
+        }
+
+        // Prog
+        const crumbProg = document.getElementById('crumbProg');
+        if (wizardState.prog_mode === 'select') {
+            const sel = document.getElementById('selectProgInput');
+            crumbProg.textContent = sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].text : 'Prog: None';
+        } else {
+            crumbProg.textContent = wizardState.prog_data.name ? `Prog: ${wizardState.prog_data.name} (New)` : 'Prog: (New)';
+        }
+
+        // Sem
+        const crumbSem = document.getElementById('crumbSem');
+        if (wizardState.sem_mode === 'select') {
+            const sel = document.getElementById('selectSemInput');
+            crumbSem.textContent = sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].text : 'Sem: None';
+        } else {
+            crumbSem.textContent = wizardState.sem_data.academic_year ? `Sem ${wizardState.sem_data.number} (${wizardState.sem_data.academic_year})` : 'Sem: (New)';
+        }
+
+        // Div
+        const crumbDiv = document.getElementById('crumbDiv');
+        if (wizardState.div_mode === 'select') {
+            const sel = document.getElementById('selectDivInput');
+            crumbDiv.textContent = sel.selectedIndex > 0 ? sel.options[sel.selectedIndex].text : 'Div: None';
+        } else {
+            crumbDiv.textContent = wizardState.div_data.name ? `Div ${wizardState.div_data.name} (New)` : 'Div: (New)';
+        }
+
+        // Batch
+        const crumbBatch = document.getElementById('crumbBatch');
+        if (wizardState.batch_create) {
+            const bName = document.getElementById('newBatchName').value.trim();
+            crumbBatch.textContent = bName ? `Batch: ${bName} (New)` : 'Batch: (New)';
+            crumbBatch.className = 'px-2 py-0.5 rounded bg-white font-semibold text-indigo-700 shadow-2xs border border-indigo-200 whitespace-nowrap';
+        } else {
+            crumbBatch.textContent = 'Batch: Skipped';
+            crumbBatch.className = 'px-2 py-0.5 rounded bg-white font-semibold text-slate-400 shadow-2xs border border-indigo-100 whitespace-nowrap';
+        }
+    }
+
+    function updateReviewSummary() {
+        // Dept
+        document.getElementById('revDept').textContent = document.getElementById('crumbDept').textContent.replace('Dept: ', '');
+        document.getElementById('revDeptType').textContent = wizardState.dept_mode === 'select' ? 'Existing Record' : 'Will be Created';
+
+        // Prog
+        document.getElementById('revProg').textContent = document.getElementById('crumbProg').textContent.replace('Prog: ', '');
+        document.getElementById('revProgType').textContent = wizardState.prog_mode === 'select' ? 'Existing Record' : 'Will be Created';
+
+        // Sem
+        document.getElementById('revSem').textContent = document.getElementById('crumbSem').textContent.replace('Sem: ', '');
+        document.getElementById('revSemType').textContent = wizardState.sem_mode === 'select' ? 'Existing Record' : 'Will be Created';
+
+        // Div
+        document.getElementById('revDiv').textContent = document.getElementById('crumbDiv').textContent.replace('Div: ', '');
+        document.getElementById('revDivType').textContent = wizardState.div_mode === 'select' ? 'Existing Record' : 'Will be Created';
+
+        // Batch
+        if (wizardState.batch_create) {
+            const bName = document.getElementById('newBatchName').value.trim() || 'P1';
+            const bCap = document.getElementById('newBatchCapacity').value || '30';
+            document.getElementById('revBatch').textContent = `Batch ${bName} (Cap: ${bCap})`;
+            document.getElementById('revBatchType').textContent = 'Will be Created';
+            document.getElementById('revBatchType').className = 'text-[10px] text-indigo-600 font-semibold block mt-1';
+        } else {
+            document.getElementById('revBatch').textContent = 'None';
+            document.getElementById('revBatchType').textContent = 'Skipped';
+            document.getElementById('revBatchType').className = 'text-[10px] text-slate-400 font-semibold block mt-1';
+        }
+    }
+
+    function submitAcademicStructure() {
+        hideErrors();
+
+        // If batch is toggled, validate its fields
+        if (wizardState.batch_create) {
+            const bName = document.getElementById('newBatchName').value.trim();
+            const bCap = parseInt(document.getElementById('newBatchCapacity').value, 10);
+            if (!bName) {
+                showErrors({ 'batch_name': 'Practical Batch name is required when batch is enabled.' });
+                return;
+            }
+            if (isNaN(bCap) || bCap < 1) {
+                showErrors({ 'batch_cap': 'Batch student capacity must be greater than 0.' });
+                return;
+            }
+            wizardState.batch_data.name = bName;
+            wizardState.batch_data.capacity = bCap;
+        }
+
+        // Show Global Confirmation Modal
+        showGlobalConfirmModal({
+            title: 'Confirm Academic Structure Creation',
+            message: 'Are you sure you want to finalize and link this complete academic structure? Existing selections will be linked, and new records will be saved to the database.',
+            confirmText: 'Confirm & Save',
+            isSuccess: true,
+            onConfirm: function() {
+                executeWizardSubmission();
+            }
+        });
+    }
+
+    function executeWizardSubmission() {
+        const btn = document.getElementById('submitWizardBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<svg class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg> Saving Structure...';
+
+        fetch("{% url 'staff:academic_structure_create' %}", {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': '{{ csrf_token }}',
+            },
+            body: JSON.stringify(wizardState)
+        })
+        .then(response => response.json())
+        .then(res => {
+            if (res.success) {
+                window.location.href = res.redirect_url;
+            } else {
+                btn.disabled = false;
+                btn.innerHTML = '<span>Confirm &amp; Create Structure</span>';
+                if (res.errors) {
+                    let errMap = {};
+                    for (const [k, v] of Object.entries(res.errors)) {
+                        errMap[k] = typeof v === 'object' ? Object.values(v).flat().join(', ') : v;
+                    }
+                    showErrors(errMap);
+                } else {
+                    showErrors({ 'general': res.error || 'Failed to save academic structure.' });
+                }
+            }
+        })
+        .catch(err => {
+            btn.disabled = false;
+            btn.innerHTML = '<span>Confirm &amp; Create Structure</span>';
+            showErrors({ 'network': 'Network error while creating structure: ' + err });
+        });
+    }
+</script>
+{% endblock %}
