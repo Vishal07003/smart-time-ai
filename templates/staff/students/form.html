@@ -1,0 +1,1123 @@
+{% extends "staff/base.html" %}
+
+{% block title %}
+    {% if is_edit %}Edit {{ student.user.get_full_name|default:student.user.username }} | Staff Workspace | SMART-TIME AI{% else %}Add Student | Staff Workspace | SMART-TIME AI{% endif %}
+{% endblock %}
+
+{% block header_title %}
+    {% if is_edit %}Edit Student{% else %}Add Student{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto w-full space-y-6">
+    <!-- Breadcrumb & Top Bar -->
+    <div class="flex items-center justify-between">
+        <a href="{% if is_edit %}{% url 'staff:student_detail' id=student.id %}{% else %}{% url 'staff:students' %}{% endif %}" class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-indigo-600 transition">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to {% if is_edit %}Student Profile{% else %}Students Directory{% endif %}</span>
+        </a>
+    </div>
+
+    <!-- Header Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+            <div class="h-12 w-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center font-bold text-indigo-700 text-base flex-shrink-0">
+                {% if is_edit %}
+                    {% if student.user.first_name %}
+                        {{ student.user.first_name|slice:":1"|upper }}{{ student.user.last_name|slice:":1"|upper }}
+                    {% else %}
+                        {{ student.user.username|slice:":2"|upper }}
+                    {% endif %}
+                {% else %}
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600">
+                        <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="8.5" cy="7" r="4"></circle>
+                        <line x1="20" y1="8" x2="20" y2="14"></line>
+                        <line x1="23" y1="11" x2="17" y2="11"></line>
+                    </svg>
+                {% endif %}
+            </div>
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 tracking-tight">
+                    {% if is_edit %}
+                        Edit Student: {{ student.user.get_full_name|default:student.user.username }}
+                    {% else %}
+                        Register New Student
+                    {% endif %}
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    {% if is_edit %}
+                        Update student credentials, roll number, division, and practical batch.
+                    {% else %}
+                        Create student account, profile with sequential student code and assign to division.
+                    {% endif %}
+                </p>
+            </div>
+        </div>
+
+        {% if is_edit %}
+            <div>
+                {% if student.status == 'ACTIVE' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                        ACTIVE
+                    </span>
+                {% elif student.status == 'INACTIVE' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-600 border border-slate-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-slate-400"></span>
+                        INACTIVE
+                    </span>
+                {% elif student.status == 'GRADUATED' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-blue-500"></span>
+                        GRADUATED
+                    </span>
+                {% elif student.status == 'LEFT' %}
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                        <span class="h-1.5 w-1.5 rounded-full bg-rose-400"></span>
+                        LEFT
+                    </span>
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Main Form Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 sm:p-8 shadow-xs">
+        <form method="post" novalidate class="space-y-8" id="studentForm">
+            {% csrf_token %}
+
+            <!-- Non-field Errors -->
+            {% if form.non_field_errors %}
+                <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-1">
+                    {% for error in form.non_field_errors %}
+                        <div class="flex items-center gap-2">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-rose-600 flex-shrink-0">
+                                <circle cx="12" cy="12" r="10"></circle>
+                                <line x1="12" y1="8" x2="12" y2="12"></line>
+                                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                            </svg>
+                            <span>{{ error }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <!-- SECTION 1: USER ACCOUNT & IDENTITY -->
+            <div class="space-y-5">
+                <div class="border-b border-slate-100 pb-2 flex items-center justify-between">
+                    <div>
+                        <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600">
+                                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+                                <circle cx="12" cy="7" r="4"></circle>
+                            </svg>
+                            User Account &amp; Identity
+                        </h3>
+                        <p class="text-[11px] text-slate-400 mt-0.5">Authentication credentials and basic identity details.</p>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <!-- ROW 1: Username & Student Code -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Username {% if not is_edit %}<span class="text-rose-500">*</span>{% endif %}
+                        </label>
+                        {% if is_edit %}
+                            <input type="text" value="{{ student.user.username }}" readonly class="w-full px-3.5 py-2.5 text-xs text-slate-500 border border-slate-200 rounded-xl bg-slate-100 font-mono cursor-not-allowed">
+                            <p class="text-[11px] text-slate-400 mt-1">Username cannot be changed after registration.</p>
+                        {% else %}
+                            {{ form.username }}
+                            {% if form.username.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.username.errors.0 }}</p>
+                            {% endif %}
+                            <p class="text-[11px] text-slate-400 mt-1">Unique student login handle (letters, numbers, underscores).</p>
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Student Code <span class="text-slate-400 font-normal">(Auto-generated)</span>
+                        </label>
+                        {{ form.student_code }}
+                        {% if form.student_code.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.student_code.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Sequential identifier: STU-001, STU-002... Generated server-side.</p>
+                    </div>
+
+                    <!-- ROW 2: First Name & Last Name -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            First Name
+                        </label>
+                        {{ form.first_name }}
+                        {% if form.first_name.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.first_name.errors.0 }}</p>
+                        {% endif %}
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Last Name
+                        </label>
+                        {{ form.last_name }}
+                        {% if form.last_name.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.last_name.errors.0 }}</p>
+                        {% endif %}
+                    </div>
+
+                    <!-- ROW 3: Phone Number & Email Address -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Phone Number <span class="text-slate-400 font-normal">(Optional)</span>
+                        </label>
+                        {{ form.phone }}
+                        {% if form.phone.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.phone.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">10-digit Indian mobile number.</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Email Address <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.email }}
+                        {% if form.email.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.email.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Institutional or personal notification email.</p>
+                    </div>
+
+                    {% if not is_edit %}
+                        <!-- Password & Confirm Password (Create mode only) -->
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                                Initial Password <span class="text-rose-500">*</span>
+                            </label>
+                            {{ form.password }}
+                            {% if form.password.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.password.errors.0 }}</p>
+                            {% endif %}
+                        </div>
+
+                        <div>
+                            <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                                Confirm Password <span class="text-rose-500">*</span>
+                            </label>
+                            {{ form.confirm_password }}
+                            {% if form.confirm_password.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.confirm_password.errors.0 }}</p>
+                            {% endif %}
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- SECTION 2: ACADEMIC PROFILE & ENROLLMENT -->
+            <div class="space-y-5 pt-4">
+                <div class="border-b border-slate-100 pb-2">
+                    <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600">
+                            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                        </svg>
+                        Academic Profile &amp; Enrollment
+                    </h3>
+                    <p class="text-[11px] text-slate-400 mt-0.5">Assign class division, practical lab batch, and roll number.</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                    <!-- ROW 1: Program & Semester (Searchable Comboboxes) -->
+                    <!-- Program Combobox -->
+                    <div class="relative" id="programComboboxWrapper">
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Program <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="hidden"
+                               id="id_program"
+                               value="{% if is_edit and student.division.semester.program %}{{ student.division.semester.program.id }}{% endif %}">
+
+                        <div class="relative">
+                            <input type="text"
+                                   id="programSearchInput"
+                                   placeholder="Search and select program..."
+                                   autocomplete="off"
+                                   class="w-full px-3.5 py-2.5 pr-16 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400 cursor-pointer">
+                            <div class="absolute inset-y-0 right-0 flex items-center pr-2.5 gap-1">
+                                <button type="button" id="programClearBtn" class="hidden p-1 text-slate-400 hover:text-slate-600 transition" title="Clear selection">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                </button>
+                                <button type="button" id="programChevronBtn" class="p-1 text-slate-400 hover:text-slate-600 transition" tabindex="-1">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Program Dropdown List -->
+                        <div id="programDropdown" class="hidden absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-y-auto py-1 text-xs">
+                            <div id="programOptionsContainer"></div>
+                            <div id="programNoMatch" class="hidden p-3 text-center text-xs text-slate-400">
+                                No matching programs found
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">Select degree or diploma program.</p>
+                    </div>
+
+                    <!-- Semester Combobox (Filtered by Selected Program) -->
+                    <div class="relative" id="semesterComboboxWrapper">
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Semester <span class="text-rose-500">*</span>
+                        </label>
+                        <input type="hidden"
+                               id="id_semester"
+                               value="{% if is_edit and student.division.semester %}{{ student.division.semester.id }}{% endif %}">
+
+                        <div class="relative">
+                            <input type="text"
+                                   id="semesterSearchInput"
+                                   placeholder="Select program first..."
+                                   autocomplete="off"
+                                   class="w-full px-3.5 py-2.5 pr-16 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400 cursor-pointer">
+                            <div class="absolute inset-y-0 right-0 flex items-center pr-2.5 gap-1">
+                                <button type="button" id="semesterClearBtn" class="hidden p-1 text-slate-400 hover:text-slate-600 transition" title="Clear selection">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                </button>
+                                <button type="button" id="semesterChevronBtn" class="p-1 text-slate-400 hover:text-slate-600 transition" tabindex="-1">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Semester Dropdown List -->
+                        <div id="semesterDropdown" class="hidden absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-y-auto py-1 text-xs">
+                            <div id="semesterOptionsContainer"></div>
+                            <div id="semesterNoMatch" class="hidden p-3 text-center text-xs text-slate-400">
+                                No semesters found for this program
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">Semesters are filtered according to selected program.</p>
+                    </div>
+
+                    <!-- ROW 2: Division & Practical Batch (Searchable Comboboxes) -->
+                    <!-- Division Combobox (Filtered by Selected Semester) -->
+                    <div class="relative" id="divisionComboboxWrapper">
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Division <span class="text-rose-500">*</span>
+                        </label>
+                        <!-- Actual form field (hidden from view, submitted with form) -->
+                        <input type="hidden"
+                                name="division"
+                                id="id_division"
+                                value="{% if form.division.value %}{{ form.division.value }}{% elif is_edit %}{{ student.division_id }}{% endif %}">
+
+                        <div class="relative">
+                            <input type="text"
+                                   id="divisionSearchInput"
+                                   placeholder="Select semester first..."
+                                   autocomplete="off"
+                                   class="w-full px-3.5 py-2.5 pr-16 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400 cursor-pointer">
+                            <div class="absolute inset-y-0 right-0 flex items-center pr-2.5 gap-1">
+                                <button type="button" id="divisionClearBtn" class="hidden p-1 text-slate-400 hover:text-slate-600 transition" title="Clear selection">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                </button>
+                                <button type="button" id="divisionChevronBtn" class="p-1 text-slate-400 hover:text-slate-600 transition" tabindex="-1">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Dropdown List -->
+                        <div id="divisionDropdown" class="hidden absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-y-auto py-1 text-xs">
+                            <div id="divisionOptionsContainer">
+                                {% for div in divisions %}
+                                    <div class="division-option px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-900 cursor-pointer transition flex items-center justify-between"
+                                         data-id="{{ div.id }}"
+                                         data-name="{{ div.name }}"
+                                         data-meta="{{ div.semester.program.code }}-Sem{{ div.semester.number }}"
+                                         data-semester-id="{{ div.semester_id }}"
+                                         data-program-id="{{ div.semester.program_id }}"
+                                         data-program-code="{{ div.semester.program.code }}"
+                                         data-program-name="{{ div.semester.program.name }}"
+                                         data-semester-number="{{ div.semester.number }}"
+                                         data-semester-academic-year="{{ div.semester.academic_year }}">
+                                        <div>
+                                            <span class="font-semibold text-slate-800">{{ div.name }}</span>
+                                            <span class="text-slate-400 ml-1.5">({{ div.semester.program.code }} &bull; Sem {{ div.semester.number }})</span>
+                                        </div>
+                                        <span class="text-[10px] text-slate-400">Cap: {{ div.capacity }}</span>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                            <div id="divisionNoMatch" class="hidden p-3 text-center text-xs text-slate-400">
+                                No divisions found for this semester
+                            </div>
+                        </div>
+
+                        {% if form.division.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.division.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Divisions are filtered according to selected semester.</p>
+                    </div>
+
+                    <!-- Practical Batch Combobox (Filtered by Selected Division) -->
+                    <div class="relative" id="batchComboboxWrapper">
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Practical Batch <span class="text-slate-400 font-normal">(Optional)</span>
+                        </label>
+                        <!-- Actual form field (hidden) -->
+                        <input type="hidden"
+                               name="batch"
+                               id="id_batch"
+                               value="{% if form.batch.value %}{{ form.batch.value }}{% elif is_edit and student.batch_id %}{{ student.batch_id }}{% endif %}">
+
+                        <div class="relative">
+                            <input type="text"
+                                   id="batchSearchInput"
+                                   placeholder="Select division first..."
+                                   autocomplete="off"
+                                   class="w-full px-3.5 py-2.5 pr-16 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400 cursor-pointer">
+                            <div class="absolute inset-y-0 right-0 flex items-center pr-2.5 gap-1">
+                                <button type="button" id="batchClearBtn" class="hidden p-1 text-slate-400 hover:text-slate-600 transition" title="Clear selection">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                                </button>
+                                <button type="button" id="batchChevronBtn" class="p-1 text-slate-400 hover:text-slate-600 transition" tabindex="-1">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Dropdown List -->
+                        <div id="batchDropdown" class="hidden absolute z-30 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-56 overflow-y-auto py-1 text-xs">
+                            <div id="batchOptionsContainer">
+                                {% for b in batches %}
+                                    <div class="batch-option px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-900 cursor-pointer transition flex items-center justify-between"
+                                         data-id="{{ b.id }}"
+                                         data-division-id="{{ b.division_id }}"
+                                         data-name="{{ b.name }}">
+                                        <span class="font-semibold text-slate-800">{{ b.name }}</span>
+                                        <span class="text-[10px] text-slate-400">Cap: {{ b.capacity }}</span>
+                                    </div>
+                                {% endfor %}
+                            </div>
+                            <div id="batchNoMatch" class="hidden p-3 text-center text-xs text-slate-400">
+                                No practical batches found for this division
+                            </div>
+                        </div>
+
+                        {% if form.batch.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.batch.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Batches are filtered according to selected division.</p>
+                    </div>
+
+                    <!-- ROW 3: Roll Number & Admission Year -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Roll Number <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.roll_number }}
+                        {% if form.roll_number.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.roll_number.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Unique identifier within the student's assigned division.</p>
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Admission Year <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.admission_year }}
+                        {% if form.admission_year.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.admission_year.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Four-digit enrollment year (e.g. 2024).</p>
+                    </div>
+
+                    <!-- ROW 4: Student Status -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Student Status <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.status }}
+                        {% if form.status.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.status.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">ACTIVE students are included in timetable attendance &amp; batches.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="pt-6 border-t border-slate-100 flex items-center justify-end gap-3">
+                <a href="{% if is_edit %}{% url 'staff:student_detail' id=student.id %}{% else %}{% url 'staff:students' %}{% endif %}" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition">
+                    Cancel
+                </a>
+                <button type="submit" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150">
+                    {% if is_edit %}Save Changes{% else %}Create Student{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Searchable Comboboxes Client-Side Interactive Logic -->
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    /* ==========================================================
+       0. METADATA & DATA EXTRACTED FROM DIVISIONS
+       ========================================================== */
+    const rawDivOptions = document.querySelectorAll('.division-option');
+
+    // Build unique Program and Semester maps
+    const programsMap = new Map();
+    const semestersMap = new Map();
+
+    rawDivOptions.forEach(opt => {
+        const progId = opt.getAttribute('data-program-id');
+        const progCode = opt.getAttribute('data-program-code');
+        const progName = opt.getAttribute('data-program-name') || progCode;
+
+        if (progId && !programsMap.has(progId)) {
+            programsMap.set(progId, {
+                id: progId,
+                code: progCode,
+                name: progName,
+            });
+        }
+
+        const semId = opt.getAttribute('data-semester-id');
+        const semNum = opt.getAttribute('data-semester-number');
+        const semYear = opt.getAttribute('data-semester-academic-year');
+
+        if (semId && !semestersMap.has(semId)) {
+            semestersMap.set(semId, {
+                id: semId,
+                programId: progId,
+                number: semNum,
+                academicYear: semYear,
+                displayName: `Semester ${semNum}${semYear ? ' (' + semYear + ')' : ''}`,
+            });
+        }
+    });
+
+    /* ==========================================================
+       1. PROGRAM COMBOBOX
+       ========================================================== */
+    const progHidden = document.getElementById('id_program');
+    const progInput = document.getElementById('programSearchInput');
+    const progDropdown = document.getElementById('programDropdown');
+    const progClearBtn = document.getElementById('programClearBtn');
+    const progChevronBtn = document.getElementById('programChevronBtn');
+    const progContainer = document.getElementById('programOptionsContainer');
+    const progNoMatch = document.getElementById('programNoMatch');
+
+    // Populate Program Options DOM
+    const sortedPrograms = Array.from(programsMap.values()).sort((a, b) => a.name.localeCompare(b.name));
+    progContainer.innerHTML = '';
+    sortedPrograms.forEach(p => {
+        const div = document.createElement('div');
+        div.className = 'program-option px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-900 cursor-pointer transition flex items-center justify-between';
+        div.setAttribute('data-id', p.id);
+        div.setAttribute('data-code', p.code);
+        div.setAttribute('data-name', p.name);
+        div.innerHTML = `
+            <div>
+                <span class="font-semibold text-slate-800">${p.code}</span>
+                <span class="text-slate-400 ml-1.5">${p.name}</span>
+            </div>
+        `;
+        progContainer.appendChild(div);
+    });
+    const progOptions = progContainer.querySelectorAll('.program-option');
+
+    function filterProgramOptions() {
+        const query = progInput.value.trim().toLowerCase();
+        let matches = 0;
+        progOptions.forEach(opt => {
+            const name = (opt.getAttribute('data-name') || '').toLowerCase();
+            const code = (opt.getAttribute('data-code') || '').toLowerCase();
+            if (!query || name.includes(query) || code.includes(query)) {
+                opt.classList.remove('hidden');
+                matches++;
+            } else {
+                opt.classList.add('hidden');
+            }
+        });
+        progNoMatch.classList.toggle('hidden', matches > 0);
+    }
+
+    function selectProgram(opt) {
+        const id = opt.getAttribute('data-id') || '';
+        const code = opt.getAttribute('data-code') || '';
+        const name = opt.getAttribute('data-name') || '';
+        progHidden.value = id;
+        progInput.value = `${code} - ${name}`;
+        progClearBtn.classList.remove('hidden');
+        progDropdown.classList.add('hidden');
+
+        // Reset dependent selections: Semester, Division, Batch
+        clearSemester();
+    }
+
+    function clearProgram() {
+        progHidden.value = '';
+        progInput.value = '';
+        progClearBtn.classList.add('hidden');
+        progOptions.forEach(opt => opt.classList.remove('hidden'));
+        progNoMatch.classList.add('hidden');
+
+        // Reset dependent selections: Semester, Division, Batch
+        clearSemester();
+    }
+
+    function showProgramDropdown() {
+        filterProgramOptions();
+        progDropdown.classList.remove('hidden');
+        semDropdown.classList.add('hidden');
+        divDropdown.classList.add('hidden');
+        batchDropdown.classList.add('hidden');
+    }
+
+    function hideProgramDropdown() {
+        progDropdown.classList.add('hidden');
+        const currentVal = progHidden.value.trim();
+        if (currentVal && programsMap.has(currentVal)) {
+            const p = programsMap.get(currentVal);
+            progInput.value = `${p.code} - ${p.name}`;
+        } else {
+            progInput.value = '';
+        }
+    }
+
+    progInput.addEventListener('focus', showProgramDropdown);
+    progInput.addEventListener('click', showProgramDropdown);
+    progInput.addEventListener('input', function () {
+        progClearBtn.classList.toggle('hidden', !this.value.trim());
+        filterProgramOptions();
+        progDropdown.classList.remove('hidden');
+    });
+    progChevronBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (progDropdown.classList.contains('hidden')) {
+            showProgramDropdown();
+        } else {
+            hideProgramDropdown();
+        }
+    });
+    progClearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        clearProgram();
+    });
+    progDropdown.addEventListener('mousedown', function (e) {
+        const opt = e.target.closest('.program-option');
+        if (opt) {
+            e.preventDefault();
+            selectProgram(opt);
+        }
+    });
+
+    /* ==========================================================
+       2. SEMESTER COMBOBOX (Filtered by Selected Program)
+       ========================================================== */
+    const semHidden = document.getElementById('id_semester');
+    const semInput = document.getElementById('semesterSearchInput');
+    const semDropdown = document.getElementById('semesterDropdown');
+    const semClearBtn = document.getElementById('semesterClearBtn');
+    const semChevronBtn = document.getElementById('semesterChevronBtn');
+    const semContainer = document.getElementById('semesterOptionsContainer');
+    const semNoMatch = document.getElementById('semesterNoMatch');
+
+    // Populate Semester Options DOM
+    const sortedSemesters = Array.from(semestersMap.values()).sort((a, b) => parseInt(a.number, 10) - parseInt(b.number, 10));
+    semContainer.innerHTML = '';
+    sortedSemesters.forEach(s => {
+        const div = document.createElement('div');
+        div.className = 'semester-option px-3.5 py-2 hover:bg-indigo-50/70 hover:text-indigo-900 cursor-pointer transition flex items-center justify-between';
+        div.setAttribute('data-id', s.id);
+        div.setAttribute('data-program-id', s.programId);
+        div.setAttribute('data-number', s.number);
+        div.setAttribute('data-academic-year', s.academicYear);
+        div.setAttribute('data-name', s.displayName);
+        div.innerHTML = `
+            <div>
+                <span class="font-semibold text-slate-800">Sem ${s.number}</span>
+                ${s.academicYear ? `<span class="text-slate-400 ml-1.5">(${s.academicYear})</span>` : ''}
+            </div>
+        `;
+        semContainer.appendChild(div);
+    });
+    const semOptions = semContainer.querySelectorAll('.semester-option');
+
+    function filterSemesterOptions(isTyping = false) {
+        const selectedProgId = progHidden.value.trim();
+        let matchCount = 0;
+
+        if (!selectedProgId) {
+            semInput.placeholder = "Select program first...";
+            semInput.disabled = true;
+            semInput.classList.add('bg-slate-50', 'cursor-not-allowed');
+            semOptions.forEach(opt => opt.classList.add('hidden'));
+            clearSemester();
+            return;
+        }
+
+        semInput.disabled = false;
+        semInput.classList.remove('bg-slate-50', 'cursor-not-allowed');
+        semInput.placeholder = "Search and select semester...";
+
+        const searchVal = isTyping ? semInput.value.trim().toLowerCase() : '';
+        let selectedSemStillValid = false;
+
+        semOptions.forEach(opt => {
+            const optProgId = opt.getAttribute('data-program-id');
+            const name = (opt.getAttribute('data-name') || '').toLowerCase();
+            const num = (opt.getAttribute('data-number') || '').toLowerCase();
+            const matchesProg = (optProgId === selectedProgId);
+            const matchesSearch = !searchVal || name.includes(searchVal) || num.includes(searchVal);
+
+            if (matchesProg && matchesSearch) {
+                opt.classList.remove('hidden');
+                matchCount++;
+            } else {
+                opt.classList.add('hidden');
+            }
+
+            if (matchesProg && opt.getAttribute('data-id') === semHidden.value) {
+                selectedSemStillValid = true;
+            }
+        });
+
+        if (semHidden.value && !selectedSemStillValid) {
+            clearSemester();
+        }
+
+        semNoMatch.classList.toggle('hidden', matchCount > 0);
+    }
+
+    function selectSemester(opt) {
+        const id = opt.getAttribute('data-id') || '';
+        const name = opt.getAttribute('data-name') || '';
+        semHidden.value = id;
+        semInput.value = name;
+        semClearBtn.classList.remove('hidden');
+        semDropdown.classList.add('hidden');
+
+        // Reset dependent selections: Division, Batch
+        clearDivision();
+    }
+
+    function clearSemester() {
+        semHidden.value = '';
+        semInput.value = '';
+        semClearBtn.classList.add('hidden');
+        semOptions.forEach(opt => opt.classList.add('hidden'));
+        semNoMatch.classList.add('hidden');
+
+        // Reset dependent selections: Division, Batch
+        clearDivision();
+    }
+
+    function showSemesterDropdown() {
+        if (!progHidden.value.trim()) return;
+        filterSemesterOptions(false);
+        semDropdown.classList.remove('hidden');
+        progDropdown.classList.add('hidden');
+        divDropdown.classList.add('hidden');
+        batchDropdown.classList.add('hidden');
+    }
+
+    function hideSemesterDropdown() {
+        semDropdown.classList.add('hidden');
+        const currentVal = semHidden.value.trim();
+        if (currentVal && semestersMap.has(currentVal)) {
+            semInput.value = semestersMap.get(currentVal).displayName;
+        } else {
+            semInput.value = '';
+        }
+    }
+
+    semInput.addEventListener('focus', showSemesterDropdown);
+    semInput.addEventListener('click', showSemesterDropdown);
+    semInput.addEventListener('input', function () {
+        semClearBtn.classList.toggle('hidden', !this.value.trim());
+        filterSemesterOptions(true);
+        semDropdown.classList.remove('hidden');
+    });
+    semChevronBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!progHidden.value.trim()) return;
+        if (semDropdown.classList.contains('hidden')) {
+            showSemesterDropdown();
+        } else {
+            hideSemesterDropdown();
+        }
+    });
+    semClearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        clearSemester();
+        filterSemesterOptions(false);
+    });
+    semDropdown.addEventListener('mousedown', function (e) {
+        const opt = e.target.closest('.semester-option');
+        if (opt) {
+            e.preventDefault();
+            selectSemester(opt);
+        }
+    });
+
+    /* ==========================================================
+       3. DIVISION COMBOBOX (Filtered by Selected Semester)
+       ========================================================== */
+    const divHidden = document.getElementById('id_division');
+    const divInput = document.getElementById('divisionSearchInput');
+    const divDropdown = document.getElementById('divisionDropdown');
+    const divClearBtn = document.getElementById('divisionClearBtn');
+    const divChevronBtn = document.getElementById('divisionChevronBtn');
+    const divOptions = document.querySelectorAll('.division-option');
+    const divNoMatch = document.getElementById('divisionNoMatch');
+
+    function filterDivisionOptions(isTyping = false) {
+        const selectedSemId = semHidden.value.trim();
+        let matchCount = 0;
+
+        if (!selectedSemId) {
+            divInput.placeholder = "Select semester first...";
+            divInput.disabled = true;
+            divInput.classList.add('bg-slate-50', 'cursor-not-allowed');
+            divOptions.forEach(opt => opt.classList.add('hidden'));
+            clearDivision();
+            return;
+        }
+
+        divInput.disabled = false;
+        divInput.classList.remove('bg-slate-50', 'cursor-not-allowed');
+        divInput.placeholder = "Search and select division...";
+
+        const searchVal = isTyping ? divInput.value.trim().toLowerCase() : '';
+        let selectedDivStillValid = false;
+
+        divOptions.forEach(opt => {
+            const optSemId = opt.getAttribute('data-semester-id');
+            const name = (opt.getAttribute('data-name') || '').toLowerCase();
+            const meta = (opt.getAttribute('data-meta') || '').toLowerCase();
+            const matchesSem = (optSemId === selectedSemId);
+            const matchesSearch = !searchVal || name.includes(searchVal) || meta.includes(searchVal);
+
+            if (matchesSem && matchesSearch) {
+                opt.classList.remove('hidden');
+                matchCount++;
+            } else {
+                opt.classList.add('hidden');
+            }
+
+            if (matchesSem && opt.getAttribute('data-id') === divHidden.value) {
+                selectedDivStillValid = true;
+            }
+        });
+
+        if (divHidden.value && !selectedDivStillValid) {
+            clearDivision();
+        }
+
+        divNoMatch.classList.toggle('hidden', matchCount > 0);
+    }
+
+    function selectDivision(opt) {
+        const id = opt.getAttribute('data-id') || '';
+        const name = opt.getAttribute('data-name') || '';
+        const meta = opt.getAttribute('data-meta') || '';
+        divHidden.value = id;
+        divInput.value = meta ? `${name} (${meta})` : name;
+        divClearBtn.classList.remove('hidden');
+        divDropdown.classList.add('hidden');
+
+        // Reset dependent selection: Batch
+        clearBatch();
+        filterBatchOptions(false);
+    }
+
+    function clearDivision() {
+        divHidden.value = '';
+        divInput.value = '';
+        divClearBtn.classList.add('hidden');
+        divOptions.forEach(opt => opt.classList.add('hidden'));
+        divNoMatch.classList.add('hidden');
+
+        // Reset dependent selection: Batch
+        clearBatch();
+        filterBatchOptions(false);
+    }
+
+    function showDivisionDropdown() {
+        if (!semHidden.value.trim()) return;
+        filterDivisionOptions(false);
+        divDropdown.classList.remove('hidden');
+        progDropdown.classList.add('hidden');
+        semDropdown.classList.add('hidden');
+        batchDropdown.classList.add('hidden');
+    }
+
+    function hideDivisionDropdown() {
+        divDropdown.classList.add('hidden');
+        const currentVal = divHidden.value.trim();
+        if (currentVal) {
+            divOptions.forEach(opt => {
+                if (opt.getAttribute('data-id') === currentVal) {
+                    const name = opt.getAttribute('data-name');
+                    const meta = opt.getAttribute('data-meta');
+                    divInput.value = `${name} (${meta})`;
+                }
+            });
+        } else {
+            divInput.value = '';
+        }
+    }
+
+    divInput.addEventListener('focus', showDivisionDropdown);
+    divInput.addEventListener('click', showDivisionDropdown);
+    divInput.addEventListener('input', function () {
+        divClearBtn.classList.toggle('hidden', !this.value.trim());
+        filterDivisionOptions(true);
+        divDropdown.classList.remove('hidden');
+    });
+    divChevronBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!semHidden.value.trim()) return;
+        if (divDropdown.classList.contains('hidden')) {
+            showDivisionDropdown();
+        } else {
+            hideDivisionDropdown();
+        }
+    });
+    divClearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        clearDivision();
+        filterDivisionOptions(false);
+    });
+    divDropdown.addEventListener('mousedown', function (e) {
+        const opt = e.target.closest('.division-option');
+        if (opt) {
+            e.preventDefault();
+            selectDivision(opt);
+        }
+    });
+
+    /* ==========================================================
+       4. BATCH COMBOBOX (Filtered by Selected Division)
+       ========================================================== */
+    const batchHidden = document.getElementById('id_batch');
+    const batchInput = document.getElementById('batchSearchInput');
+    const batchDropdown = document.getElementById('batchDropdown');
+    const batchClearBtn = document.getElementById('batchClearBtn');
+    const batchChevronBtn = document.getElementById('batchChevronBtn');
+    const batchOptions = document.querySelectorAll('.batch-option');
+    const batchNoMatch = document.getElementById('batchNoMatch');
+
+    function filterBatchOptions(isTyping = false) {
+        const selectedDivId = divHidden.value.trim();
+        let matchCount = 0;
+
+        if (!selectedDivId) {
+            batchInput.placeholder = "Select division first...";
+            batchInput.disabled = true;
+            batchInput.classList.add('bg-slate-50', 'cursor-not-allowed');
+            batchOptions.forEach(opt => opt.classList.add('hidden'));
+            clearBatch();
+            return;
+        }
+
+        batchInput.disabled = false;
+        batchInput.classList.remove('bg-slate-50', 'cursor-not-allowed');
+        batchInput.placeholder = "Search and select batch (optional)...";
+
+        const searchVal = isTyping ? batchInput.value.trim().toLowerCase() : '';
+        let selectedBatchStillValid = false;
+
+        batchOptions.forEach(opt => {
+            const optDivId = opt.getAttribute('data-division-id');
+            const name = (opt.getAttribute('data-name') || '').toLowerCase();
+            const matchesDiv = (optDivId === selectedDivId);
+            const matchesSearch = !searchVal || name.includes(searchVal);
+
+            if (matchesDiv && matchesSearch) {
+                opt.classList.remove('hidden');
+                matchCount++;
+            } else {
+                opt.classList.add('hidden');
+            }
+
+            if (matchesDiv && opt.getAttribute('data-id') === batchHidden.value) {
+                selectedBatchStillValid = true;
+            }
+        });
+
+        if (batchHidden.value && !selectedBatchStillValid) {
+            clearBatch();
+        }
+
+        batchNoMatch.classList.toggle('hidden', matchCount > 0);
+    }
+
+    function selectBatch(opt) {
+        const id = opt.getAttribute('data-id') || '';
+        const name = opt.getAttribute('data-name') || '';
+        batchHidden.value = id;
+        batchInput.value = name;
+        batchClearBtn.classList.remove('hidden');
+        batchDropdown.classList.add('hidden');
+    }
+
+    function clearBatch() {
+        batchHidden.value = '';
+        batchInput.value = '';
+        batchClearBtn.classList.add('hidden');
+        batchOptions.forEach(opt => opt.classList.add('hidden'));
+        batchNoMatch.classList.add('hidden');
+    }
+
+    function showBatchDropdown() {
+        if (!divHidden.value.trim()) return;
+        filterBatchOptions(false);
+        batchDropdown.classList.remove('hidden');
+        progDropdown.classList.add('hidden');
+        semDropdown.classList.add('hidden');
+        divDropdown.classList.add('hidden');
+    }
+
+    function hideBatchDropdown() {
+        batchDropdown.classList.add('hidden');
+        const currentBatchVal = batchHidden.value.trim();
+        if (currentBatchVal) {
+            batchOptions.forEach(opt => {
+                if (opt.getAttribute('data-id') === currentBatchVal) {
+                    batchInput.value = opt.getAttribute('data-name');
+                }
+            });
+        } else {
+            batchInput.value = '';
+        }
+    }
+
+    batchInput.addEventListener('focus', showBatchDropdown);
+    batchInput.addEventListener('click', showBatchDropdown);
+    batchInput.addEventListener('input', function () {
+        batchClearBtn.classList.toggle('hidden', !this.value.trim());
+        filterBatchOptions(true);
+        batchDropdown.classList.remove('hidden');
+    });
+    batchChevronBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (!divHidden.value.trim()) return;
+        if (batchDropdown.classList.contains('hidden')) {
+            showBatchDropdown();
+        } else {
+            hideBatchDropdown();
+        }
+    });
+    batchClearBtn.addEventListener('click', function (e) {
+        e.stopPropagation();
+        clearBatch();
+        filterBatchOptions(false);
+    });
+    batchDropdown.addEventListener('mousedown', function (e) {
+        const opt = e.target.closest('.batch-option');
+        if (opt) {
+            e.preventDefault();
+            selectBatch(opt);
+        }
+    });
+
+    // Close on click outside
+    document.addEventListener('click', function (e) {
+        if (!document.getElementById('programComboboxWrapper').contains(e.target)) {
+            hideProgramDropdown();
+        }
+        if (!document.getElementById('semesterComboboxWrapper').contains(e.target)) {
+            hideSemesterDropdown();
+        }
+        if (!document.getElementById('divisionComboboxWrapper').contains(e.target)) {
+            hideDivisionDropdown();
+        }
+        if (!document.getElementById('batchComboboxWrapper').contains(e.target)) {
+            hideBatchDropdown();
+        }
+    });
+
+    /* ==========================================================
+       5. INITIALIZATION & PRE-FILLING (EDIT MODE & POST-BACK)
+       ========================================================== */
+    function initAll() {
+        const currentDivVal = divHidden.value.trim();
+
+        // If division is set (e.g. edit mode or validation error post-back)
+        if (currentDivVal) {
+            let matchedDivOpt = null;
+            divOptions.forEach(opt => {
+                if (opt.getAttribute('data-id') === currentDivVal) {
+                    matchedDivOpt = opt;
+                }
+            });
+
+            if (matchedDivOpt) {
+                const progId = matchedDivOpt.getAttribute('data-program-id');
+                const semId = matchedDivOpt.getAttribute('data-semester-id');
+                const divName = matchedDivOpt.getAttribute('data-name');
+                const divMeta = matchedDivOpt.getAttribute('data-meta');
+
+                // 1. Program
+                if (progId && programsMap.has(progId)) {
+                    progHidden.value = progId;
+                    const p = programsMap.get(progId);
+                    progInput.value = `${p.code} - ${p.name}`;
+                    progClearBtn.classList.remove('hidden');
+                }
+
+                // 2. Semester
+                if (semId && semestersMap.has(semId)) {
+                    semHidden.value = semId;
+                    semInput.value = semestersMap.get(semId).displayName;
+                    semClearBtn.classList.remove('hidden');
+                }
+
+                // 3. Division
+                divInput.value = `${divName} (${divMeta})`;
+                divClearBtn.classList.remove('hidden');
+            }
+        } else if (progHidden.value.trim() && programsMap.has(progHidden.value.trim())) {
+            const p = programsMap.get(progHidden.value.trim());
+            progInput.value = `${p.code} - ${p.name}`;
+            progClearBtn.classList.remove('hidden');
+
+            if (semHidden.value.trim() && semestersMap.has(semHidden.value.trim())) {
+                semInput.value = semestersMap.get(semHidden.value.trim()).displayName;
+                semClearBtn.classList.remove('hidden');
+            }
+        }
+
+        // Apply filters based on initialized values
+        filterSemesterOptions(false);
+        filterDivisionOptions(false);
+        filterBatchOptions(false);
+
+        // 4. Batch
+        const currentBatchVal = batchHidden.value.trim();
+        if (currentBatchVal) {
+            batchOptions.forEach(opt => {
+                if (opt.getAttribute('data-id') === currentBatchVal) {
+                    batchInput.value = opt.getAttribute('data-name');
+                    batchClearBtn.classList.remove('hidden');
+                }
+            });
+        }
+    }
+
+    initAll();
+});
+</script>
+{% endblock %}
