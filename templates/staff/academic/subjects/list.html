@@ -1,7 +1,7 @@
 {% extends "staff/base.html" %}
 
-{% block title %}Divisions | Academic Management | Staff Workspace | SMART-TIME AI{% endblock %}
-{% block header_title %}Class Divisions{% endblock %}
+{% block title %}Subjects | Academic Management | Staff Workspace | SMART-TIME AI{% endblock %}
+{% block header_title %}Curricular Subjects{% endblock %}
 
 {% block content %}
 <div class="space-y-6 max-w-7xl mx-auto w-full">
@@ -9,32 +9,24 @@
     <div class="rounded-2xl bg-white border border-slate-200/70 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
             <div class="flex items-center gap-2 text-xs font-semibold text-indigo-600 mb-1">
-                <span>Academic Structure</span>
+                <span>Academic Courses</span>
                 <span>&bull;</span>
-                <span class="text-slate-400">Programs &bull; Semesters &bull; Divisions &bull; Batches</span>
+                <span class="text-slate-400">Programs &bull; Semesters &bull; Curricula</span>
             </div>
             <h2 class="text-lg sm:text-xl font-bold text-slate-900 tracking-tight leading-snug">
-                Class Divisions
+                Subject &amp; Course Management
             </h2>
             <p class="text-xs sm:text-sm text-slate-500 mt-0.5">
-                Organize students into classroom divisions and manage maximum seat capacities
+                Manage academic courses, credits, delivery hours, and teacher allocations
             </p>
         </div>
         <div class="flex items-center gap-3">
-            <a href="{% url 'staff:academic_structure_create' %}" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-semibold shadow-xs transition duration-150">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
-                    <polyline points="2 17 12 22 22 17"></polyline>
-                    <polyline points="2 12 12 17 22 12"></polyline>
-                </svg>
-                <span>Create Academic Structure</span>
-            </a>
-            <a href="{% url 'staff:academic_division_create' %}{% if current_semester %}?semester={{ current_semester }}{% endif %}" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold shadow-xs transition duration-150">
+            <a href="{% url 'staff:academic_subject_create' %}{% if current_program %}?program={{ current_program }}{% endif %}" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
                     <line x1="5" y1="12" x2="19" y2="12"></line>
                 </svg>
-                <span>Add Division</span>
+                <span>Add Subject</span>
             </a>
         </div>
     </div>
@@ -50,50 +42,67 @@
         <a href="{% url 'staff:academic_semesters' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
             Semesters
         </a>
-        <a href="{% url 'staff:academic_divisions' %}" class="px-3.5 py-2 rounded-xl bg-indigo-600 text-white shadow-xs">
+        <a href="{% url 'staff:academic_divisions' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
             Divisions
         </a>
         <a href="{% url 'staff:academic_batches' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
             Practical Batches
         </a>
-        <a href="{% url 'staff:academic_subjects' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
+        <a href="{% url 'staff:academic_subjects' %}" class="px-3.5 py-2 rounded-xl bg-indigo-600 text-white shadow-xs">
             Subjects
         </a>
     </div>
 
     <!-- Quick Stat Pills -->
-    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <div class="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div class="bg-white p-4 rounded-xl border border-slate-200/70 shadow-xs flex items-center justify-between">
             <div>
-                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Total Divisions</span>
-                <div class="text-2xl font-bold text-slate-900 tracking-tight mt-1">{{ total_divisions_count }}</div>
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Total Subjects</span>
+                <div class="text-2xl font-bold text-slate-900 tracking-tight mt-1">{{ total_subjects_count }}</div>
             </div>
             <span class="h-9 w-9 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path>
-                    <circle cx="9" cy="7" r="4"></circle>
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
                 </svg>
             </span>
         </div>
         <div class="bg-white p-4 rounded-xl border border-slate-200/70 shadow-xs flex items-center justify-between">
             <div>
-                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Programs Active</span>
-                <div class="text-2xl font-bold text-indigo-600 tracking-tight mt-1">{{ programs|length }}</div>
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Lectures</span>
+                <div class="text-2xl font-bold text-indigo-600 tracking-tight mt-1">{{ lecture_count }}</div>
             </div>
             <span class="h-9 w-9 rounded-xl bg-indigo-50 border border-indigo-100 flex items-center justify-center text-indigo-600">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M12 14l9-5-9-5-9 5 9 5z"></path>
+                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                    <line x1="8" y1="21" x2="16" y2="21"></line>
+                    <line x1="12" y1="17" x2="12" y2="21"></line>
                 </svg>
             </span>
         </div>
         <div class="bg-white p-4 rounded-xl border border-slate-200/70 shadow-xs flex items-center justify-between">
             <div>
-                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Filtered Count</span>
-                <div class="text-2xl font-bold text-slate-700 tracking-tight mt-1">{{ paginator.count }}</div>
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Practicals</span>
+                <div class="text-2xl font-bold text-purple-600 tracking-tight mt-1">{{ practical_count }}</div>
             </div>
-            <span class="h-9 w-9 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-center text-slate-500">
+            <span class="h-9 w-9 rounded-xl bg-purple-50 border border-purple-100 flex items-center justify-center text-purple-600">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3"></polygon>
+                    <path d="M10 2v7.31"></path>
+                    <path d="M14 9.3V2"></path>
+                    <path d="M8.5 2h7"></path>
+                    <path d="M14 9.3a6.5 6.5 0 1 1-4 0"></path>
+                </svg>
+            </span>
+        </div>
+        <div class="bg-white p-4 rounded-xl border border-slate-200/70 shadow-xs flex items-center justify-between">
+            <div>
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider">Tutorials</span>
+                <div class="text-2xl font-bold text-sky-600 tracking-tight mt-1">{{ tutorial_count }}</div>
+            </div>
+            <span class="h-9 w-9 rounded-xl bg-sky-50 border border-sky-100 flex items-center justify-center text-sky-600">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <polyline points="12 6 12 12 16 14"></polyline>
                 </svg>
             </span>
         </div>
@@ -101,7 +110,7 @@
 
     <!-- Search & Filters Bar -->
     <div class="rounded-2xl bg-white border border-slate-200/70 p-4 sm:p-5 shadow-xs">
-        <form method="get" action="{% url 'staff:academic_divisions' %}" class="flex flex-col lg:flex-row gap-3">
+        <form method="get" action="{% url 'staff:academic_subjects' %}" class="flex flex-col lg:flex-row gap-3">
             <div class="relative flex-1">
                 <span class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -109,7 +118,7 @@
                         <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
                     </svg>
                 </span>
-                <input type="text" name="q" value="{{ q }}" placeholder="Search division by name, program, or semester..." class="w-full pl-10 pr-4 py-2.5 text-xs text-slate-800 bg-slate-50/70 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition">
+                <input type="text" name="q" value="{{ q }}" placeholder="Search subject by title, code, program, or department..." class="w-full pl-10 pr-4 py-2.5 text-xs text-slate-800 bg-slate-50/70 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 transition">
             </div>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 lg:w-auto">
@@ -122,11 +131,11 @@
                     {% endfor %}
                 </select>
 
-                <select name="semester" class="px-3 py-2 text-xs text-slate-700 bg-slate-50/70 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600">
-                    <option value="">All Semesters</option>
-                    {% for s in semesters %}
-                        <option value="{{ s.id }}" {% if current_semester == s.id|stringformat:"s" %}selected{% endif %}>
-                            {{ s.program.code }} - Sem {{ s.number }} ({{ s.academic_year }})
+                <select name="type" onchange="this.form.submit()" class="px-3 py-2 text-xs text-slate-700 bg-slate-50/70 border border-slate-200 rounded-xl focus:bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600">
+                    <option value="">All Delivery Types</option>
+                    {% for val, label in type_choices %}
+                        <option value="{{ val }}" {% if current_type == val %}selected{% endif %}>
+                            {{ label }}
                         </option>
                     {% endfor %}
                 </select>
@@ -136,8 +145,8 @@
                 <button type="submit" class="w-full lg:w-auto px-4 py-2.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl text-xs font-semibold shadow-xs transition">
                     Filter
                 </button>
-                {% if q or current_program or current_semester %}
-                    <a href="{% url 'staff:academic_divisions' %}" class="w-full lg:w-auto px-3.5 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl text-xs font-semibold text-center transition">
+                {% if q or current_program or current_type %}
+                    <a href="{% url 'staff:academic_subjects' %}" class="w-full lg:w-auto px-3.5 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl text-xs font-semibold text-center transition">
                         Reset
                     </a>
                 {% endif %}
@@ -145,62 +154,84 @@
         </form>
     </div>
 
-    <!-- Divisions Table Card -->
+    <!-- Subjects Table Card -->
     <div class="rounded-2xl bg-white border border-slate-200/70 shadow-xs overflow-hidden">
-        {% if divisions %}
+        {% if subjects %}
             <div class="overflow-x-auto">
                 <table class="w-full text-left border-collapse text-xs">
                     <thead>
                         <tr class="border-b border-slate-200/80 bg-slate-50/50 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
-                            <th class="py-3 px-4 sm:px-6">Division</th>
-                            <th class="py-3 px-4">Academic Hierarchy</th>
+                            <th class="py-3 px-4 sm:px-6">Subject Code &amp; Title</th>
+                            <th class="py-3 px-4">Program</th>
                             <th class="py-3 px-4">Department</th>
-                            <th class="py-3 px-4">Capacity</th>
-                            <th class="py-3 px-4">Practical Batches</th>
+                            <th class="py-3 px-4">Type</th>
+                            <th class="py-3 px-4">Credits &amp; Weekly Load</th>
+                            <th class="py-3 px-4">Assigned Teachers</th>
                             <th class="py-3 px-4 sm:px-6 text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100 font-normal">
-                        {% for d in divisions %}
+                        {% for subj in subjects %}
                             <tr class="hover:bg-slate-50/80 transition-colors duration-100">
-                                <td class="py-3.5 px-4 sm:px-6 whitespace-nowrap">
-                                    <div class="font-bold text-slate-900 text-sm">Division {{ d.name }}</div>
-                                </td>
-                                <td class="py-3.5 px-4">
-                                    <div class="flex items-center gap-1.5 flex-wrap">
-                                        <span class="font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 text-[11px]">
-                                            {{ d.semester.program.code }}
+                                <td class="py-3.5 px-4 sm:px-6">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-mono font-bold text-slate-900 bg-slate-100 border border-slate-200 px-2 py-0.5 rounded text-[11px]">
+                                            {{ subj.code }}
                                         </span>
-                                        <span class="font-medium text-slate-700 text-xs">Sem {{ d.semester.number }}</span>
-                                        <span class="text-slate-400 text-xs font-mono">({{ d.semester.academic_year }})</span>
+                                        <a href="{% url 'staff:academic_subject_detail' id=subj.id %}" class="font-bold text-slate-900 hover:text-indigo-600 transition text-sm">
+                                            {{ subj.name }}
+                                        </a>
                                     </div>
-                                    <div class="text-[11px] text-slate-500 mt-0.5">{{ d.semester.program.name }}</div>
                                 </td>
                                 <td class="py-3.5 px-4">
-                                    {% if d.semester.program.department %}
-                                        <div class="font-medium text-slate-800 text-xs">{{ d.semester.program.department.name }}</div>
-                                        <div class="text-[11px] text-slate-400 font-mono">{{ d.semester.program.department.code }}</div>
+                                    <span class="font-semibold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-100 text-[11px]">
+                                        {{ subj.program.code }}
+                                    </span>
+                                    <span class="text-slate-600 text-xs ml-1">{{ subj.program.name }}</span>
+                                </td>
+                                <td class="py-3.5 px-4">
+                                    {% if subj.program.department %}
+                                        <div class="font-medium text-slate-800 text-xs">{{ subj.program.department.name }}</div>
+                                        <div class="text-[11px] text-slate-400 font-mono">{{ subj.program.department.code }}</div>
                                     {% else %}
                                         <span class="text-slate-400 text-xs italic">—</span>
                                     {% endif %}
                                 </td>
-                                <td class="py-3.5 px-4 whitespace-nowrap text-slate-700 font-mono text-xs">
-                                    {{ d.capacity }} seats
+                                <td class="py-3.5 px-4 whitespace-nowrap">
+                                    <div class="flex items-center gap-1.5 flex-wrap">
+                                        {% for comp in subj.delivery_components %}
+                                            <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold {% if comp == 'Practical' %}bg-purple-50 text-purple-700 border border-purple-100{% elif comp == 'Tutorial' %}bg-sky-50 text-sky-700 border border-sky-100{% else %}bg-indigo-50 text-indigo-700 border border-indigo-100{% endif %}">
+                                                {{ comp }}
+                                            </span>
+                                        {% endfor %}
+                                    </div>
                                 </td>
                                 <td class="py-3.5 px-4 whitespace-nowrap">
-                                    <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                        {{ d.batches.count }} Batch{{ d.batches.count|pluralize:"es" }}
-                                    </span>
+                                    <div class="font-semibold text-slate-800">{{ subj.credits }} Credits</div>
+                                    <div class="text-[11px] text-slate-400">
+                                        {{ subj.weekly_lectures }}L / {{ subj.weekly_practicals }}P ({{ subj.duration_minutes }} min)
+                                    </div>
+                                </td>
+                                <td class="py-3.5 px-4 whitespace-nowrap">
+                                    {% if subj.teacher_subjects.all %}
+                                        <div class="flex items-center gap-1">
+                                            <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                                {{ subj.teacher_subjects.count }} Faculty
+                                            </span>
+                                        </div>
+                                    {% else %}
+                                        <span class="text-slate-400 text-xs italic">Unassigned</span>
+                                    {% endif %}
                                 </td>
                                 <td class="py-3.5 px-4 sm:px-6 whitespace-nowrap text-right">
                                     <div class="inline-flex items-center gap-1.5">
-                                        <a href="{% url 'staff:academic_batches' %}?division={{ d.id }}" class="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition" title="View Batches">
+                                        <a href="{% url 'staff:academic_subject_detail' id=subj.id %}" class="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition" title="View Subject Detail">
                                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
                                                 <circle cx="12" cy="12" r="3"></circle>
                                             </svg>
                                         </a>
-                                        <a href="{% url 'staff:academic_division_edit' id=d.id %}" class="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition" title="Edit Division">
+                                        <a href="{% url 'staff:academic_subject_edit' id=subj.id %}" class="p-1.5 rounded-lg text-slate-500 hover:text-amber-600 hover:bg-amber-50 transition" title="Edit Subject">
                                             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                                                 <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
                                                 <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
@@ -218,7 +249,7 @@
             {% if page_obj.has_other_pages %}
                 <div class="p-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-500">
                     <div>
-                        Showing <span class="font-semibold text-slate-700">{{ page_obj.start_index }}</span> to <span class="font-semibold text-slate-700">{{ page_obj.end_index }}</span> of <span class="font-semibold text-slate-700">{{ paginator.count }}</span> divisions
+                        Showing <span class="font-semibold text-slate-700">{{ page_obj.start_index }}</span> to <span class="font-semibold text-slate-700">{{ page_obj.end_index }}</span> of <span class="font-semibold text-slate-700">{{ paginator.count }}</span> subjects
                     </div>
                     <div class="flex items-center gap-1.5">
                         {% if page_obj.has_previous %}
@@ -241,20 +272,20 @@
             <div class="py-16 text-center">
                 <div class="h-12 w-12 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center mx-auto mb-3">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                        <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"></path>
-                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
                     </svg>
                 </div>
-                <h3 class="text-sm font-bold text-slate-900">No divisions found</h3>
+                <h3 class="text-sm font-bold text-slate-900">No subjects found</h3>
                 <p class="text-xs text-slate-500 max-w-sm mx-auto mb-4">
-                    {% if q or current_program or current_semester %}
-                        No class divisions matched your current search filters.
+                    {% if q or current_program or current_type %}
+                        No academic courses matched your current search filters.
                     {% else %}
-                        Configure class divisions under active semesters.
+                        No curricular subjects have been added to the academic programs yet.
                     {% endif %}
                 </p>
-                <a href="{% url 'staff:academic_division_create' %}" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition">
-                    + Add Division
+                <a href="{% url 'staff:academic_subject_create' %}" class="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition">
+                    + Add Subject
                 </a>
             </div>
         {% endif %}

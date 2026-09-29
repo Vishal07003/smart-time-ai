@@ -21,7 +21,15 @@
             </p>
         </div>
         <div class="flex items-center gap-3">
-            <a href="{% url 'staff:academic_semester_create' %}{% if current_program %}?program={{ current_program }}{% endif %}" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150">
+            <a href="{% url 'staff:academic_structure_create' %}" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-gradient-to-r from-indigo-600 to-violet-600 hover:from-indigo-700 hover:to-violet-700 text-white text-xs font-semibold shadow-xs transition duration-150">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                    <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+                    <polyline points="2 17 12 22 22 17"></polyline>
+                    <polyline points="2 12 12 17 22 12"></polyline>
+                </svg>
+                <span>Create Academic Structure</span>
+            </a>
+            <a href="{% url 'staff:academic_semester_create' %}{% if current_program %}?program={{ current_program }}{% endif %}" class="inline-flex items-center gap-2 px-3.5 py-2 rounded-xl bg-white border border-slate-200 text-slate-700 hover:bg-slate-50 text-xs font-semibold shadow-xs transition duration-150">
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"></line>
                     <line x1="5" y1="12" x2="19" y2="12"></line>
@@ -47,6 +55,9 @@
         </a>
         <a href="{% url 'staff:academic_batches' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
             Practical Batches
+        </a>
+        <a href="{% url 'staff:academic_subjects' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
+            Subjects
         </a>
     </div>
 
@@ -145,6 +156,7 @@
                         <tr class="border-b border-slate-200/80 bg-slate-50/50 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
                             <th class="py-3 px-4 sm:px-6">Semester</th>
                             <th class="py-3 px-4">Program</th>
+                            <th class="py-3 px-4">Department</th>
                             <th class="py-3 px-4">Academic Year</th>
                             <th class="py-3 px-4">Divisions</th>
                             <th class="py-3 px-4 sm:px-6 text-right">Actions</th>
@@ -161,6 +173,14 @@
                                         {{ s.program.code }}
                                     </span>
                                     <span class="text-slate-600 text-xs ml-1.5">{{ s.program.name }}</span>
+                                </td>
+                                <td class="py-3.5 px-4">
+                                    {% if s.program.department %}
+                                        <div class="font-medium text-slate-800 text-xs">{{ s.program.department.name }}</div>
+                                        <div class="text-[11px] text-slate-400 font-mono">{{ s.program.department.code }}</div>
+                                    {% else %}
+                                        <span class="text-slate-400 text-xs italic">—</span>
+                                    {% endif %}
                                 </td>
                                 <td class="py-3.5 px-4 whitespace-nowrap text-slate-700 font-mono text-xs">
                                     {{ s.academic_year }}

@@ -1,0 +1,204 @@
+{% extends "staff/base.html" %}
+
+{% block title %}{{ subject.code }} - {{ subject.name }} | Academic Management | SMART-TIME AI{% endblock %}
+{% block header_title %}Subject Details{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto w-full space-y-6">
+    <!-- Breadcrumb & Top Bar -->
+    <div class="flex items-center justify-between">
+        <a href="{% url 'staff:academic_subjects' %}" class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-indigo-600 transition">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to Subjects</span>
+        </a>
+        <div class="flex items-center gap-2">
+            <a href="{% url 'staff:academic_subject_edit' id=subject.id %}" class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold shadow-xs transition">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                </svg>
+                <span>Edit Subject</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Section 1: Subject Overview Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 sm:p-7 shadow-xs">
+        <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-100 pb-5">
+            <div class="flex items-start gap-4">
+                <div class="h-14 w-14 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center font-bold text-indigo-700 text-lg flex-shrink-0">
+                    {{ subject.code|slice:":2" }}
+                </div>
+                <div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200">
+                            {{ subject.code }}
+                        </span>
+                        {% for comp in subject.delivery_components %}
+                            <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold {% if comp == 'Practical' %}bg-purple-50 text-purple-700 border border-purple-100{% elif comp == 'Tutorial' %}bg-sky-50 text-sky-700 border border-sky-100{% else %}bg-indigo-50 text-indigo-700 border border-indigo-100{% endif %}">
+                                {{ comp }}
+                            </span>
+                        {% endfor %}
+                    </div>
+                    <h2 class="text-xl font-bold text-slate-900 tracking-tight mt-1.5">
+                        {{ subject.name }}
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-0.5">
+                        Offered under {{ subject.program.name }} ({{ subject.program.code }}) &bull; {{ subject.program.department.name }}
+                    </p>
+                </div>
+            </div>
+            <div class="flex items-center gap-2">
+                <span class="px-3 py-1.5 rounded-xl font-bold text-xs bg-indigo-50 text-indigo-700 border border-indigo-100">
+                    {{ subject.credits }} Credit Points
+                </span>
+            </div>
+        </div>
+
+        <!-- Academic & Scheduling Specs -->
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-5 text-xs">
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Weekly Lectures</span>
+                <span class="text-base font-bold text-slate-800 mt-0.5 block">{{ subject.weekly_lectures }} Sessions</span>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Weekly Practicals</span>
+                <span class="text-base font-bold text-slate-800 mt-0.5 block">{{ subject.weekly_practicals }} Sessions</span>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Session Duration</span>
+                <span class="text-base font-bold text-slate-800 mt-0.5 block">{{ subject.duration_minutes }} Minutes</span>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Department Code</span>
+                <span class="text-base font-mono font-bold text-slate-800 mt-0.5 block">{{ subject.program.department.code }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Section 2: Assigned Teachers Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 shadow-xs">
+        <div class="border-b border-slate-100 pb-3 mb-4 flex items-center justify-between">
+            <div>
+                <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+                        <circle cx="9" cy="7" r="4"></circle>
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+                    </svg>
+                    <span>Assigned Faculty / Instructors (TeacherSubject)</span>
+                </h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">Faculty members authorized to teach this course for timetable allocations</p>
+            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">
+                {{ assigned_teachers|length }} Qualified Faculty
+            </span>
+        </div>
+
+        {% if assigned_teachers %}
+            <div class="overflow-x-auto rounded-xl border border-slate-200/80">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                            <th class="py-3 px-4">Faculty Name</th>
+                            <th class="py-3 px-4">Teacher Code</th>
+                            <th class="py-3 px-4">Department</th>
+                            <th class="py-3 px-4 text-right">Assignment Priority</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 font-normal">
+                        {% for ts in assigned_teachers %}
+                            <tr class="hover:bg-slate-50/60 transition">
+                                <td class="py-3 px-4">
+                                    <a href="{% url 'staff:teacher_detail' id=ts.teacher.id %}" class="font-semibold text-slate-900 hover:text-indigo-600 transition">
+                                        {{ ts.teacher.user.get_full_name|default:ts.teacher.user.username }}
+                                    </a>
+                                </td>
+                                <td class="py-3 px-4 whitespace-nowrap font-mono text-slate-700">
+                                    {{ ts.teacher.employee_code }}
+                                </td>
+                                <td class="py-3 px-4 text-slate-600">
+                                    {{ ts.teacher.department.name }} ({{ ts.teacher.department.code }})
+                                </td>
+                                <td class="py-3 px-4 text-right whitespace-nowrap">
+                                    <span class="px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200 text-[11px] font-semibold">
+                                        Priority {{ ts.priority }}
+                                    </span>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                <p class="text-xs text-slate-500">No faculty members currently mapped to this subject.</p>
+            </div>
+        {% endif %}
+    </div>
+
+    <!-- Section 3: Timetable Scheduled Slots -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 shadow-xs">
+        <div class="border-b border-slate-100 pb-3 mb-4 flex items-center justify-between">
+            <div>
+                <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600">
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <polyline points="12 6 12 12 16 14"></polyline>
+                    </svg>
+                    <span>Active Timetable Allocations</span>
+                </h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">Existing classroom timetable schedule slots utilizing this subject</p>
+            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                {{ timetable_slots|length }} Slots Found
+            </span>
+        </div>
+
+        {% if timetable_slots %}
+            <div class="overflow-x-auto rounded-xl border border-slate-200/80">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                            <th class="py-3 px-4">Day</th>
+                            <th class="py-3 px-4">Time Slot</th>
+                            <th class="py-3 px-4">Instructor</th>
+                            <th class="py-3 px-4">Division / Batch</th>
+                            <th class="py-3 px-4">Classroom</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 font-normal">
+                        {% for slot in timetable_slots %}
+                            <tr class="hover:bg-slate-50/60 transition">
+                                <td class="py-3 px-4 font-semibold text-slate-900">
+                                    {{ slot.get_day_display }}
+                                </td>
+                                <td class="py-3 px-4 font-mono text-slate-700">
+                                    {{ slot.start_time|time:"H:i" }} - {{ slot.end_time|time:"H:i" }}
+                                </td>
+                                <td class="py-3 px-4 text-slate-700">
+                                    {{ slot.teacher.user.get_full_name|default:slot.teacher.user.username }}
+                                </td>
+                                <td class="py-3 px-4 text-slate-700">
+                                    Div {{ slot.division.name }}{% if slot.batch %} ({{ slot.batch.name }}){% endif %}
+                                </td>
+                                <td class="py-3 px-4 text-slate-700">
+                                    {{ slot.classroom.room_number|default:"—" }}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                <p class="text-xs text-slate-500">No timetable schedule slots generated for this subject yet.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

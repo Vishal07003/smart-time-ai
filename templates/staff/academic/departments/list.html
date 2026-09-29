@@ -39,7 +39,7 @@
         </div>
     </div>
 
-    <!-- Academic Navigation Tabs (Department -> Program -> Semester -> Division -> Practical Batch) -->
+    <!-- Academic Navigation Tabs (Department -> Program -> Semester -> Division -> Practical Batch -> Subjects) -->
     <div class="flex items-center gap-2 border-b border-slate-200/80 pb-2 text-xs font-semibold overflow-x-auto">
         <a href="{% url 'staff:academic_departments' %}" class="px-3.5 py-2 rounded-xl bg-indigo-600 text-white shadow-xs">
             Departments
@@ -55,6 +55,9 @@
         </a>
         <a href="{% url 'staff:academic_batches' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
             Practical Batches
+        </a>
+        <a href="{% url 'staff:academic_subjects' %}" class="px-3.5 py-2 rounded-xl text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition">
+            Subjects
         </a>
     </div>
 

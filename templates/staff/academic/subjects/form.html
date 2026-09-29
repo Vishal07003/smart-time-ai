@@ -1,0 +1,314 @@
+{% extends "staff/base.html" %}
+
+{% block title %}
+    {% if is_edit %}Edit Subject {{ subject.code }} | Academic Management | SMART-TIME AI{% else %}Add Subject | Academic Management | SMART-TIME AI{% endif %}
+{% endblock %}
+{% block header_title %}
+    {% if is_edit %}Edit Subject{% else %}Add Subject{% endif %}
+{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto w-full space-y-6">
+    <!-- Breadcrumb & Top Bar -->
+    <div class="flex items-center justify-between">
+        <a href="{% url 'staff:academic_subjects' %}" class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-indigo-600 transition">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to Subjects</span>
+        </a>
+    </div>
+
+    <!-- Header Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-5 sm:p-6 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div class="flex items-center gap-4">
+            <div class="h-12 w-12 rounded-2xl bg-indigo-50 border border-indigo-100 flex items-center justify-center font-bold text-indigo-700 text-base flex-shrink-0">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-indigo-600">
+                    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path>
+                    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path>
+                </svg>
+            </div>
+            <div>
+                <h2 class="text-lg font-bold text-slate-900 tracking-tight">
+                    {% if is_edit %}Edit Subject: {{ subject.name }} ({{ subject.code }}){% else %}Create Curricular Subject{% endif %}
+                </h2>
+                <p class="text-xs text-slate-500 mt-0.5">
+                    {% if is_edit %}Update course title, delivery type, credits, and weekly session requirements.{% else %}Define a new course or subject tied to an academic degree program.{% endif %}
+                </p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Form Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 sm:p-8 shadow-xs">
+        <form method="post" novalidate class="space-y-6" id="subjectForm">
+            {% csrf_token %}
+
+            {% if form.non_field_errors %}
+                <div class="p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-xs space-y-1">
+                    {% for error in form.non_field_errors %}
+                        <div class="flex items-center gap-2">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-rose-600 flex-shrink-0"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                            <span>{{ error }}</span>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            <div class="space-y-5">
+                <!-- Program Selection -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Program <span class="text-rose-500">*</span>
+                    </label>
+                    {{ form.program }}
+                    {% if form.program.errors %}
+                        <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.program.errors.0 }}</p>
+                    {% endif %}
+                    <p class="text-[11px] text-slate-400 mt-1">Parent program offering this subject.</p>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <!-- Subject Title -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Subject Title <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.name }}
+                        {% if form.name.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.name.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Full title (e.g. Data Structures and Algorithms).</p>
+                    </div>
+
+                    <!-- Subject Code -->
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                            Subject Code <span class="text-rose-500">*</span>
+                        </label>
+                        {{ form.code }}
+                        {% if form.code.errors %}
+                            <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.code.errors.0 }}</p>
+                        {% endif %}
+                        <p class="text-[11px] text-slate-400 mt-1">Unique alphanumeric code (e.g. CS201, IT-302).</p>
+                    </div>
+                </div>
+
+                <!-- Delivery Components Selector (Checkboxes) -->
+                <div class="rounded-xl border border-slate-200/90 bg-slate-50/70 p-4 sm:p-5 space-y-4">
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-800 mb-1">
+                            Delivery Components <span class="text-rose-500">*</span>
+                        </label>
+                        <p class="text-[11px] text-slate-500">
+                            Select all instructional delivery components that apply to this subject (e.g. both Lecture &amp; Practical for lab courses).
+                        </p>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <!-- Lecture Option -->
+                        <label class="relative flex items-start p-3.5 rounded-xl border cursor-pointer transition select-none bg-white hover:border-indigo-300" id="label_has_lecture">
+                            <div class="flex items-center h-5">
+                                {{ form.has_lecture }}
+                            </div>
+                            <div class="ml-3 text-xs">
+                                <span class="font-bold text-slate-900 block flex items-center gap-1.5">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-indigo-600">
+                                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+                                        <line x1="8" y1="21" x2="16" y2="21"></line>
+                                        <line x1="12" y1="17" x2="12" y2="21"></line>
+                                    </svg>
+                                    Lecture
+                                </span>
+                                <span class="text-[11px] text-slate-500 block mt-0.5">Theory / Classroom teaching</span>
+                            </div>
+                        </label>
+
+                        <!-- Practical Option -->
+                        <label class="relative flex items-start p-3.5 rounded-xl border cursor-pointer transition select-none bg-white hover:border-purple-300" id="label_has_practical">
+                            <div class="flex items-center h-5">
+                                {{ form.has_practical }}
+                            </div>
+                            <div class="ml-3 text-xs">
+                                <span class="font-bold text-slate-900 block flex items-center gap-1.5">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-purple-600">
+                                        <path d="M10 2v7.31"></path>
+                                        <path d="M14 9.3V2"></path>
+                                        <path d="M8.5 2h7"></path>
+                                        <path d="M14 9.3a6.5 6.5 0 1 1-4 0"></path>
+                                    </svg>
+                                    Practical
+                                </span>
+                                <span class="text-[11px] text-slate-500 block mt-0.5">Laboratory / Hands-on sessions</span>
+                            </div>
+                        </label>
+
+                        <!-- Tutorial Option -->
+                        <label class="relative flex items-start p-3.5 rounded-xl border cursor-pointer transition select-none bg-white hover:border-sky-300" id="label_has_tutorial">
+                            <div class="flex items-center h-5">
+                                {{ form.has_tutorial }}
+                            </div>
+                            <div class="ml-3 text-xs">
+                                <span class="font-bold text-slate-900 block flex items-center gap-1.5">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-sky-600">
+                                        <circle cx="12" cy="12" r="10"></circle>
+                                        <polyline points="12 6 12 12 16 14"></polyline>
+                                    </svg>
+                                    Tutorial
+                                </span>
+                                <span class="text-[11px] text-slate-500 block mt-0.5">Discussion / Problem solving</span>
+                            </div>
+                        </label>
+                    </div>
+
+                    {% if form.has_lecture.errors or form.has_practical.errors or form.has_tutorial.errors %}
+                        <p class="text-[11px] text-rose-600 font-medium">Please select at least one delivery component.</p>
+                    {% endif %}
+                </div>
+
+                <!-- Academic Credits -->
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1.5">
+                        Credit Points <span class="text-rose-500">*</span>
+                    </label>
+                    {{ form.credits }}
+                    {% if form.credits.errors %}
+                        <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.credits.errors.0 }}</p>
+                    {% endif %}
+                    <p class="text-[11px] text-slate-400 mt-1">Total academic credits assigned to this subject (e.g. 3.0, 4.0).</p>
+                </div>
+
+                <!-- Dynamic Weekly Sessions & Duration Fields -->
+                <div class="p-4 sm:p-5 rounded-xl bg-slate-50/70 border border-slate-200/80 space-y-4" id="timetable_specs_container">
+                    <div class="flex items-center justify-between border-b border-slate-200 pb-2.5">
+                        <div>
+                            <span class="text-xs font-bold text-slate-800 uppercase tracking-wider block">Weekly Session &amp; Resource Allocation</span>
+                            <span class="text-[11px] text-slate-500">Configure weekly sessions required by timetable generator for active components.</span>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                        <!-- Weekly Lectures (only visible when Lecture is checked) -->
+                        <div id="lecture_fields" class="transition-all duration-200">
+                            <label class="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                                <span>Weekly Lectures <span class="text-rose-500">*</span></span>
+                                <span class="text-[10px] font-mono font-medium text-indigo-600 bg-indigo-50 px-1.5 py-0.2 rounded border border-indigo-100">Classroom</span>
+                            </label>
+                            {{ form.weekly_lectures }}
+                            {% if form.weekly_lectures.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.weekly_lectures.errors.0 }}</p>
+                            {% endif %}
+                            <p class="text-[11px] text-slate-400 mt-1">Classroom sessions / week.</p>
+                        </div>
+
+                        <!-- Weekly Practicals (only visible when Practical is checked) -->
+                        <div id="practical_fields" class="transition-all duration-200">
+                            <label class="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                                <span>Weekly Practicals <span class="text-rose-500">*</span></span>
+                                <span class="text-[10px] font-mono font-medium text-purple-600 bg-purple-50 px-1.5 py-0.2 rounded border border-purple-100">Laboratory</span>
+                            </label>
+                            {{ form.weekly_practicals }}
+                            {% if form.weekly_practicals.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.weekly_practicals.errors.0 }}</p>
+                            {% endif %}
+                            <p class="text-[11px] text-slate-400 mt-1">Lab sessions / week per batch.</p>
+                        </div>
+
+                        <!-- Duration Minutes -->
+                        <div id="duration_fields">
+                            <label class="block text-xs font-semibold text-slate-700 mb-1.5 flex items-center justify-between">
+                                <span>Session Duration <span class="text-rose-500">*</span></span>
+                                <span class="text-[10px] font-mono font-medium text-slate-500 bg-slate-100 px-1.5 py-0.2 rounded">Minutes</span>
+                            </label>
+                            {{ form.duration_minutes }}
+                            {% if form.duration_minutes.errors %}
+                                <p class="text-[11px] text-rose-600 mt-1 font-medium">{{ form.duration_minutes.errors.0 }}</p>
+                            {% endif %}
+                            <p class="text-[11px] text-slate-400 mt-1">Standard period duration (min 15).</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="pt-4 border-t border-slate-100 flex items-center justify-end gap-3">
+                <a href="{% url 'staff:academic_subjects' %}" class="px-4 py-2.5 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600 hover:bg-slate-50 transition">
+                    Cancel
+                </a>
+                <button type="submit" class="px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold shadow-xs transition duration-150">
+                    {% if is_edit %}Save Changes{% else %}Create Subject{% endif %}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+    document.addEventListener("DOMContentLoaded", function () {
+        const lecCheckbox = document.getElementById("id_has_lecture");
+        const pracCheckbox = document.getElementById("id_has_practical");
+        const tutCheckbox = document.getElementById("id_has_tutorial");
+
+        const lecFields = document.getElementById("lecture_fields");
+        const pracFields = document.getElementById("practical_fields");
+        const lecInput = document.getElementById("id_weekly_lectures");
+        const pracInput = document.getElementById("id_weekly_practicals");
+
+        const labelLec = document.getElementById("label_has_lecture");
+        const labelPrac = document.getElementById("label_has_practical");
+        const labelTut = document.getElementById("label_has_tutorial");
+
+        function updateComponentDisplay() {
+            // Lecture
+            if (lecCheckbox && lecCheckbox.checked) {
+                lecFields.classList.remove("hidden");
+                labelLec.classList.add("border-indigo-500", "bg-indigo-50/40", "ring-1", "ring-indigo-500/30");
+                labelLec.classList.remove("border-slate-200");
+                if (lecInput && (!lecInput.value || parseInt(lecInput.value) <= 0)) {
+                    lecInput.value = 4;
+                }
+            } else {
+                lecFields.classList.add("hidden");
+                labelLec.classList.remove("border-indigo-500", "bg-indigo-50/40", "ring-1", "ring-indigo-500/30");
+                labelLec.classList.add("border-slate-200");
+                if (lecInput) {
+                    lecInput.value = 0;
+                }
+            }
+
+            // Practical
+            if (pracCheckbox && pracCheckbox.checked) {
+                pracFields.classList.remove("hidden");
+                labelPrac.classList.add("border-purple-500", "bg-purple-50/40", "ring-1", "ring-purple-500/30");
+                labelPrac.classList.remove("border-slate-200");
+                if (pracInput && (!pracInput.value || parseInt(pracInput.value) <= 0)) {
+                    pracInput.value = 2;
+                }
+            } else {
+                pracFields.classList.add("hidden");
+                labelPrac.classList.remove("border-purple-500", "bg-purple-50/40", "ring-1", "ring-purple-500/30");
+                labelPrac.classList.add("border-slate-200");
+                if (pracInput) {
+                    pracInput.value = 0;
+                }
+            }
+
+            // Tutorial
+            if (tutCheckbox && tutCheckbox.checked) {
+                labelTut.classList.add("border-sky-500", "bg-sky-50/40", "ring-1", "ring-sky-500/30");
+                labelTut.classList.remove("border-slate-200");
+            } else {
+                labelTut.classList.remove("border-sky-500", "bg-sky-50/40", "ring-1", "ring-sky-500/30");
+                labelTut.classList.add("border-slate-200");
+            }
+        }
+
+        if (lecCheckbox) lecCheckbox.addEventListener("change", updateComponentDisplay);
+        if (pracCheckbox) pracCheckbox.addEventListener("change", updateComponentDisplay);
+        if (tutCheckbox) tutCheckbox.addEventListener("change", updateComponentDisplay);
+
+        // Initial setup
+        updateComponentDisplay();
+    });
+</script>
+{% endblock %}

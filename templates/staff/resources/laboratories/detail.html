@@ -1,0 +1,151 @@
+{% extends "staff/base.html" %}
+
+{% block title %}{{ laboratory.name }} ({{ laboratory.lab_number }}) | Laboratory Details | Staff Workspace{% endblock %}
+{% block header_title %}Laboratory Details{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto w-full space-y-6">
+    <!-- Breadcrumb & Top Bar -->
+    <div class="flex items-center justify-between">
+        <a href="{% url 'staff:laboratories' %}" class="inline-flex items-center gap-2 text-xs font-semibold text-slate-500 hover:text-purple-600 transition">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="19" y1="12" x2="5" y2="12"></line>
+                <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+            <span>Back to Laboratories</span>
+        </a>
+
+        <div class="flex items-center gap-2">
+            <a href="{% url 'staff:laboratory_edit' id=laboratory.id %}" class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold transition">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
+                <span>Edit Laboratory</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Laboratory Identity Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 sm:p-7 shadow-xs">
+        <div class="flex flex-col sm:flex-row sm:items-start justify-between gap-4 border-b border-slate-100 pb-5">
+            <div class="flex items-start gap-4">
+                <div class="h-14 w-14 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center font-bold text-purple-700 text-base flex-shrink-0">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 2v7.31"></path><path d="M14 9.3V2"></path><path d="M8.5 2h7"></path><path d="M14 9.3a6.5 6.5 0 1 1-4 0"></path></svg>
+                </div>
+                <div>
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-mono font-bold text-xs bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200">
+                            {{ laboratory.lab_number }}
+                        </span>
+                        {% if laboratory.status == 'AVAILABLE' %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                <span class="h-1.5 w-1.5 rounded-full bg-emerald-500"></span>
+                                Available
+                            </span>
+                        {% elif laboratory.status == 'MAINTENANCE' %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200">
+                                <span class="h-1.5 w-1.5 rounded-full bg-amber-500"></span>
+                                Maintenance
+                            </span>
+                        {% else %}
+                            <span class="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[11px] font-semibold bg-rose-50 text-rose-700 border border-rose-200">
+                                <span class="h-1.5 w-1.5 rounded-full bg-rose-500"></span>
+                                Unavailable
+                            </span>
+                        {% endif %}
+                    </div>
+                    <h2 class="text-xl font-bold text-slate-900 tracking-tight mt-1.5">
+                        {{ laboratory.name }}
+                    </h2>
+                    <p class="text-xs text-slate-500 mt-0.5">
+                        {{ laboratory.building }} &bull; Lab Code {{ laboratory.lab_number }} &bull; Designed for division practical batch sessions
+                    </p>
+                </div>
+            </div>
+            <div>
+                <span class="px-3 py-1.5 rounded-xl font-bold text-xs bg-purple-50 text-purple-700 border border-purple-100">
+                    {{ laboratory.capacity }} Workstations Capacity
+                </span>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-5 text-xs">
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Building</span>
+                <span class="text-base font-bold text-slate-800 mt-0.5 block">{{ laboratory.building }}</span>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Floor</span>
+                <span class="text-base font-bold text-slate-800 mt-0.5 block">
+                    {% if laboratory.floor == 0 %}Ground Floor{% else %}Floor {{ laboratory.floor }}{% endif %}
+                </span>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Capacity</span>
+                <span class="text-base font-bold text-slate-800 mt-0.5 block">{{ laboratory.capacity }} Workstations</span>
+            </div>
+            <div class="p-3 rounded-xl bg-slate-50 border border-slate-100">
+                <span class="text-[11px] font-semibold text-slate-400 uppercase tracking-wider block">Scheduled Sessions</span>
+                <span class="text-base font-bold text-slate-800 mt-0.5 block">{{ slots|length }} Practical Slots</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Scheduled Timetable Practical Slots Card -->
+    <div class="rounded-2xl bg-white border border-slate-200/70 p-6 shadow-xs">
+        <div class="border-b border-slate-100 pb-3 mb-4 flex items-center justify-between">
+            <div>
+                <h3 class="text-xs font-bold text-slate-900 uppercase tracking-wider flex items-center gap-2">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="text-purple-600">
+                        <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                        <line x1="16" y1="2" x2="16" y2="6"></line>
+                        <line x1="8" y1="2" x2="8" y2="6"></line>
+                        <line x1="3" y1="10" x2="21" y2="10"></line>
+                    </svg>
+                    <span>Practical Sessions &amp; Batch Bookings</span>
+                </h3>
+                <p class="text-[11px] text-slate-400 mt-0.5">Laboratory practical sessions allocated across division batches</p>
+            </div>
+            <span class="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-100">
+                {{ slots|length }} Active Bookings
+            </span>
+        </div>
+
+        {% if slots %}
+            <div class="overflow-x-auto rounded-xl border border-slate-200/80">
+                <table class="w-full text-left border-collapse text-xs">
+                    <thead>
+                        <tr class="bg-slate-50/75 border-b border-slate-200/80 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
+                            <th class="py-3 px-4">Day</th>
+                            <th class="py-3 px-4">Time</th>
+                            <th class="py-3 px-4">Practical Subject</th>
+                            <th class="py-3 px-4">Division &amp; Batch</th>
+                            <th class="py-3 px-4">Instructor</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        {% for s in slots %}
+                            <tr class="hover:bg-slate-50/60 transition">
+                                <td class="py-3 px-4 font-semibold text-slate-900">{{ s.day|title }}</td>
+                                <td class="py-3 px-4 font-mono text-slate-700">{{ s.start_time|time:"H:i" }} – {{ s.end_time|time:"H:i" }}</td>
+                                <td class="py-3 px-4 font-medium text-slate-900">{{ s.subject.name }} ({{ s.subject.code }})</td>
+                                <td class="py-3 px-4 text-slate-600">
+                                    {{ s.division.name }}
+                                    {% if s.batch %}
+                                        <span class="ml-1 px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 font-mono text-[10px] font-semibold border border-purple-100">
+                                            {{ s.batch.name }}
+                                        </span>
+                                    {% endif %}
+                                </td>
+                                <td class="py-3 px-4 text-slate-700">{{ s.teacher.user.get_full_name|default:s.teacher.employee_code }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <div class="p-8 text-center bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                <p class="text-xs text-slate-500">No practical sessions currently booked in this laboratory.</p>
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
