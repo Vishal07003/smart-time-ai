@@ -765,3 +765,79 @@ class StudentProfileAPITests(APITestCase):
         res_list = self.client.get(self.students_url)
         self.assertEqual(res_list.status_code, status.HTTP_403_FORBIDDEN)
 
+    def test_self_registered_student_can_create_own_profile(self):
+        # 1. Register self-registered user with role=STUDENT and no StudentProfile
+        new_student = UserModel.objects.create_user(
+            username="self_reg_alice",
+            email="alice@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+            first_name="",
+            last_name="",
+        )
+        refresh = RefreshToken.for_user(new_student)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # Initially GET /me/ should return 404 because StudentProfile does not exist
+        res_before = self.client.get(self.student_me_url)
+        self.assertEqual(res_before.status_code, status.HTTP_404_NOT_FOUND)
+
+        # 2. Self-registered student completes profile via POST /api/v1/students/me/
+        payload = {
+            "roll_number": "102",
+            "division": str(self.div_a.id),
+            "batch": str(self.batch_a1.id),
+            "first_name": "Alice",
+            "last_name": "Wonder",
+            "phone": "9876543210",
+        }
+        res_create = self.client.post(self.student_me_url, payload, format="json")
+        self.assertEqual(res_create.status_code, status.HTTP_201_CREATED)
+        self.assertTrue(res_create.data["success"])
+        self.assertEqual(res_create.data["student"]["roll_number"], "102")
+
+        # 3. Verify profile persists and GET /students/me/ returns 200
+        res_after = self.client.get(self.student_me_url)
+        self.assertEqual(res_after.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_after.data["student"]["roll_number"], "102")
+        self.assertEqual(str(res_after.data["student"]["division"]), str(self.div_a.id))
+        self.assertEqual(res_after.data["student"]["division_name"], "A")
+
+        # Check user details updated
+        new_student.refresh_from_db()
+        self.assertEqual(new_student.first_name, "Alice")
+        self.assertEqual(new_student.last_name, "Wonder")
+        self.assertEqual(new_student.phone, "9876543210")
+
+    def test_student_cannot_create_duplicate_profile(self):
+        # Already has self.student_profile
+        refresh = RefreshToken.for_user(self.student_user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        payload = {
+            "roll_number": "105",
+            "division": str(self.div_a.id),
+        }
+        response = self.client.post(self.student_me_url, payload, format="json")
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+    def test_student_cannot_modify_another_students_profile(self):
+        # Another student charlie
+        charlie = UserModel.objects.create_user(
+            username="student_charlie",
+            email="charlie@smarttime.ai",
+            password="Password123!",
+            role=User.Role.STUDENT,
+        )
+        refresh = RefreshToken.for_user(charlie)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
+
+        # Attempt to access Bob's profile endpoint directly via staff detail URL
+        res_bob = self.client.patch(
+            self.student_detail_url,
+            {"roll_number": "999"},
+            format="json",
+        )
+        self.assertEqual(res_bob.status_code, status.HTTP_403_FORBIDDEN)
+
+

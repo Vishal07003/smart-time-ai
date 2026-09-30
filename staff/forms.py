@@ -3,7 +3,22 @@ from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 
-from academics.models import Department, Division, PracticalBatch, Program, Semester
+from academics.models import (
+    Classroom,
+    Department,
+    Division,
+    Laboratory,
+    PracticalBatch,
+    Program,
+    Semester,
+    Subject,
+    TeacherAvailability,
+    TeacherLeave,
+    TeacherSubject,
+    Timetable,
+    TimetableConflict,
+    TimetableSlot,
+)
 from accounts.models import TeacherProfile, User
 from accounts.validators import (
     normalize_email,
@@ -1359,6 +1374,706 @@ class PracticalBatchForm(forms.ModelForm):
                 self.add_error("name", "A batch with this name already exists in this division.")
 
         return cleaned_data
+
+
+class SubjectForm(forms.ModelForm):
+    """
+    Form for creating and editing Curricular Subjects / Courses with multiple delivery components.
+    Supports any combination of:
+    - Lecture (weekly lectures, lecture session duration)
+    - Practical (weekly practicals, practical session duration)
+    - Tutorial (tutorial session duration)
+    """
+
+    has_lecture = forms.BooleanField(
+        required=False,
+        initial=True,
+        label="Lecture",
+    )
+    has_practical = forms.BooleanField(
+        required=False,
+        initial=False,
+        label="Practical",
+    )
+    has_tutorial = forms.BooleanField(
+        required=False,
+        initial=False,
+        label="Tutorial",
+    )
+
+    class Meta:
+        model = Subject
+        fields = [
+            "program",
+            "name",
+            "code",
+            "credits",
+            "weekly_lectures",
+            "weekly_practicals",
+            "duration_minutes",
+        ]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400"
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+
+        self.fields["program"].queryset = Program.objects.select_related("department").all().order_by("name")
+        self.fields["program"].widget.attrs.update({"class": select_classes})
+        self.fields["program"].empty_label = "Select program..."
+
+        self.fields["name"].widget = forms.TextInput(
+            attrs={
+                "class": input_classes,
+                "placeholder": "e.g. Java Programming",
+            }
+        )
+        self.fields["code"].widget = forms.TextInput(
+            attrs={
+                "class": input_classes,
+                "placeholder": "e.g. CS201, IT-302",
+            }
+        )
+
+        self.fields["credits"].widget = forms.NumberInput(
+            attrs={
+                "class": input_classes,
+                "step": "0.5",
+                "min": "0",
+                "placeholder": "4.0",
+            }
+        )
+        self.fields["weekly_lectures"].widget = forms.NumberInput(
+            attrs={
+                "class": input_classes,
+                "min": "0",
+                "placeholder": "4",
+            }
+        )
+        self.fields["weekly_practicals"].widget = forms.NumberInput(
+            attrs={
+                "class": input_classes,
+                "min": "0",
+                "placeholder": "2",
+            }
+        )
+        self.fields["duration_minutes"].widget = forms.NumberInput(
+            attrs={
+                "class": input_classes,
+                "min": "1",
+                "placeholder": "60",
+            }
+        )
+
+        # Pre-populate checkboxes if editing existing instance
+        if self.instance and self.instance.pk:
+            has_lec = (self.instance.weekly_lectures or 0) > 0 or self.instance.type == Subject.Type.LECTURE
+            has_prac = (self.instance.weekly_practicals or 0) > 0 or self.instance.type == Subject.Type.PRACTICAL
+            has_tut = self.instance.type == Subject.Type.TUTORIAL
+
+            self.fields["has_lecture"].initial = has_lec
+            self.fields["has_practical"].initial = has_prac
+            self.fields["has_tutorial"].initial = has_tut
+        elif not self.is_bound:
+            self.fields["has_lecture"].initial = True
+            self.fields["has_practical"].initial = False
+            self.fields["has_tutorial"].initial = False
+
+    def clean_name(self):
+        name = self.cleaned_data.get("name", "").strip()
+        if not name:
+            raise forms.ValidationError("Subject name is required.")
+        return name
+
+    def clean_code(self):
+        code = self.cleaned_data.get("code", "").strip().upper()
+        if not code:
+            raise forms.ValidationError("Subject code is required.")
+        qs = Subject.objects.filter(code__iexact=code)
+        if self.instance and self.instance.pk:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise forms.ValidationError("A subject with this code already exists.")
+        return code
+
+    def clean_credits(self):
+        credits_val = self.cleaned_data.get("credits")
+        if credits_val is None or credits_val < 0:
+            raise forms.ValidationError("Credits must be a non-negative number.")
+        return credits_val
+
+    def clean(self):
+        cleaned_data = super().clean()
+        has_lecture = cleaned_data.get("has_lecture", False)
+        has_practical = cleaned_data.get("has_practical", False)
+        has_tutorial = cleaned_data.get("has_tutorial", False)
+
+        if not (has_lecture or has_practical or has_tutorial):
+            raise forms.ValidationError("Please select at least one delivery component (Lecture, Practical, or Tutorial).")
+
+        weekly_lectures = cleaned_data.get("weekly_lectures") or 0
+        weekly_practicals = cleaned_data.get("weekly_practicals") or 0
+        duration_minutes = cleaned_data.get("duration_minutes")
+
+        # Validate Lecture component requirements
+        if has_lecture:
+            if weekly_lectures <= 0:
+                self.add_error("weekly_lectures", "Weekly lecture sessions must be at least 1 when Lecture component is selected.")
+        else:
+            cleaned_data["weekly_lectures"] = 0
+
+        # Validate Practical component requirements
+        if has_practical:
+            if weekly_practicals <= 0:
+                self.add_error("weekly_practicals", "Weekly practical sessions must be at least 1 when Practical component is selected.")
+        else:
+            cleaned_data["weekly_practicals"] = 0
+
+        # Duration validation
+        if duration_minutes is None or duration_minutes <= 0:
+            self.add_error("duration_minutes", "Session duration must be greater than 0 minutes.")
+
+        # Determine primary model delivery type based on selected components
+        if has_lecture:
+            cleaned_data["type"] = Subject.Type.LECTURE
+        elif has_practical:
+            cleaned_data["type"] = Subject.Type.PRACTICAL
+        elif has_tutorial:
+            cleaned_data["type"] = Subject.Type.TUTORIAL
+
+        return cleaned_data
+
+    def save(self, commit=True):
+        instance = super().save(commit=False)
+        instance.type = self.cleaned_data.get("type", instance.type)
+        instance.weekly_lectures = self.cleaned_data.get("weekly_lectures", 0)
+        instance.weekly_practicals = self.cleaned_data.get("weekly_practicals", 0)
+        if commit:
+            instance.save()
+        return instance
+
+
+class TeacherSubjectForm(forms.ModelForm):
+    """
+    Form for assigning a Curricular Subject to a Teacher Profile.
+    """
+
+    class Meta:
+        model = TeacherSubject
+        fields = ["subject", "priority"]
+
+    def __init__(self, *args, teacher=None, **kwargs):
+        self.teacher = teacher or (kwargs.get("instance").teacher if kwargs.get("instance") else None)
+        super().__init__(*args, **kwargs)
+
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400"
+
+        self.fields["subject"].queryset = Subject.objects.select_related("program", "program__department").all().order_by("code")
+        self.fields["subject"].widget.attrs.update({"class": select_classes})
+        self.fields["subject"].empty_label = "Select Subject..."
+
+        self.fields["priority"].widget = forms.NumberInput(
+            attrs={
+                "class": input_classes,
+                "min": "1",
+                "max": "10",
+                "placeholder": "1",
+            }
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        subject = cleaned_data.get("subject")
+        if self.teacher and subject:
+            qs = TeacherSubject.objects.filter(teacher=self.teacher, subject=subject)
+            if self.instance and self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                self.add_error("subject", f"Subject '{subject.code}' is already assigned to this teacher.")
+        return cleaned_data
+
+
+class TeacherAvailabilityForm(forms.ModelForm):
+    """
+    Form for configuring weekly availability time slots for a teacher.
+    """
+
+    class Meta:
+        model = TeacherAvailability
+        fields = ["day", "start_time", "end_time", "is_available"]
+
+    def __init__(self, *args, teacher=None, **kwargs):
+        self.teacher = teacher or (kwargs.get("instance").teacher if kwargs.get("instance") else None)
+        super().__init__(*args, **kwargs)
+
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+
+        self.fields["day"].widget.attrs.update({"class": select_classes})
+        self.fields["start_time"].widget = forms.TimeInput(
+            attrs={"class": input_classes, "type": "time"}
+        )
+        self.fields["end_time"].widget = forms.TimeInput(
+            attrs={"class": input_classes, "type": "time"}
+        )
+        self.fields["is_available"].widget.attrs.update(
+            {"class": "h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"}
+        )
+
+    def clean(self):
+        cleaned_data = super().clean()
+        day = cleaned_data.get("day")
+        start_time = cleaned_data.get("start_time")
+        end_time = cleaned_data.get("end_time")
+
+        if start_time and end_time and start_time >= end_time:
+            self.add_error("end_time", "End time must be strictly after start time.")
+
+        if self.teacher and day and start_time and end_time:
+            qs = TeacherAvailability.objects.filter(
+                teacher=self.teacher,
+                day=day,
+                start_time__lt=end_time,
+                end_time__gt=start_time,
+            )
+            if self.instance and self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                self.add_error("start_time", "Time slot overlaps with another scheduled slot on this day.")
+
+        return cleaned_data
+
+
+class TeacherLeaveForm(forms.ModelForm):
+    """
+    Form for submitting and managing teacher leave records.
+    """
+
+    class Meta:
+        model = TeacherLeave
+        fields = ["start_date", "end_date", "reason", "status"]
+
+    def __init__(self, *args, teacher=None, is_staff_manager=True, **kwargs):
+        self.teacher = teacher or (kwargs.get("instance").teacher if kwargs.get("instance") else None)
+        super().__init__(*args, **kwargs)
+
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+        textarea_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400"
+
+        self.fields["start_date"].widget = forms.DateInput(
+            attrs={"class": input_classes, "type": "date"}
+        )
+        self.fields["end_date"].widget = forms.DateInput(
+            attrs={"class": input_classes, "type": "date"}
+        )
+        self.fields["reason"].widget = forms.Textarea(
+            attrs={"class": textarea_classes, "rows": 3, "placeholder": "Specify reason for leave..."}
+        )
+        self.fields["status"].widget.attrs.update({"class": select_classes})
+
+        if not is_staff_manager:
+            self.fields["status"].widget = forms.HiddenInput()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        start_date = cleaned_data.get("start_date")
+        end_date = cleaned_data.get("end_date")
+        reason = cleaned_data.get("reason", "").strip()
+
+        if not reason:
+            self.add_error("reason", "Reason for leave cannot be blank.")
+
+        if start_date and end_date:
+            if start_date > end_date:
+                self.add_error("end_date", "End date must be greater than or equal to start date.")
+
+            if self.teacher:
+                qs = TeacherLeave.objects.filter(
+                    teacher=self.teacher,
+                    start_date__lte=end_date,
+                    end_date__gte=start_date,
+                ).exclude(status=TeacherLeave.Status.REJECTED)
+                if self.instance and self.instance.pk:
+                    qs = qs.exclude(pk=self.instance.pk)
+                if qs.exists():
+                    self.add_error("start_date", "A leave record already overlaps with the selected date range.")
+
+        return cleaned_data
+
+
+class ClassroomForm(forms.ModelForm):
+    """
+    Form for creating and editing physical classroom resources.
+    """
+
+    class Meta:
+        model = Classroom
+        fields = ["building", "room_number", "floor", "capacity", "status"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400"
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+
+        self.fields["building"].widget = forms.TextInput(
+            attrs={"class": input_classes, "placeholder": "e.g. Main Academic Block, Block A"}
+        )
+        self.fields["room_number"].widget = forms.TextInput(
+            attrs={"class": input_classes, "placeholder": "e.g. 101, LH-1"}
+        )
+        self.fields["floor"].widget = forms.NumberInput(
+            attrs={"class": input_classes, "placeholder": "0 (Ground floor), 1, 2"}
+        )
+        self.fields["capacity"].widget = forms.NumberInput(
+            attrs={"class": input_classes, "min": "1", "placeholder": "60"}
+        )
+        self.fields["status"].widget.attrs.update({"class": select_classes})
+
+    def clean(self):
+        cleaned_data = super().clean()
+        building = (cleaned_data.get("building") or "").strip()
+        room_number = (cleaned_data.get("room_number") or "").strip()
+
+        if building and room_number:
+            qs = Classroom.objects.filter(building__iexact=building, room_number__iexact=room_number)
+            if self.instance and self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                self.add_error("room_number", f"Classroom '{room_number}' in building '{building}' already exists.")
+
+        return cleaned_data
+
+
+class LaboratoryForm(forms.ModelForm):
+    """
+    Form for creating and editing laboratory resources.
+    """
+
+    class Meta:
+        model = Laboratory
+        fields = ["building", "lab_number", "name", "floor", "capacity", "status"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400"
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+
+        self.fields["building"].widget = forms.TextInput(
+            attrs={"class": input_classes, "placeholder": "e.g. Engineering Block, Block B"}
+        )
+        self.fields["lab_number"].widget = forms.TextInput(
+            attrs={"class": input_classes, "placeholder": "e.g. LAB-101, L1"}
+        )
+        self.fields["name"].widget = forms.TextInput(
+            attrs={"class": input_classes, "placeholder": "e.g. Advanced Computing Lab, Electronics Lab"}
+        )
+        self.fields["floor"].widget = forms.NumberInput(
+            attrs={"class": input_classes, "placeholder": "0, 1, 2"}
+        )
+        self.fields["capacity"].widget = forms.NumberInput(
+            attrs={"class": input_classes, "min": "1", "placeholder": "30"}
+        )
+        self.fields["status"].widget.attrs.update({"class": select_classes})
+
+    def clean(self):
+        cleaned_data = super().clean()
+        building = (cleaned_data.get("building") or "").strip()
+        lab_number = (cleaned_data.get("lab_number") or "").strip()
+
+        if building and lab_number:
+            qs = Laboratory.objects.filter(building__iexact=building, lab_number__iexact=lab_number)
+            if self.instance and self.instance.pk:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                self.add_error("lab_number", f"Laboratory '{lab_number}' in building '{building}' already exists.")
+
+        return cleaned_data
+
+
+class TimetableForm(forms.ModelForm):
+    """
+    Form for creating a new Timetable container for a Semester and Academic Year.
+    Automates next version numbering and sets status to DRAFT.
+    """
+
+    class Meta:
+        model = Timetable
+        fields = ["semester", "academic_year", "status"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400"
+
+        self.fields["semester"].widget.attrs.update({"class": select_classes})
+        self.fields["semester"].queryset = Semester.objects.select_related("program").all().order_by("program__name", "number")
+        self.fields["academic_year"].widget = forms.TextInput(
+            attrs={"class": input_classes, "placeholder": "e.g. 2025-2026"}
+        )
+        self.fields["status"].widget.attrs.update({"class": select_classes})
+        if not self.instance.pk:
+            self.fields["status"].initial = Timetable.Status.DRAFT
+
+    def clean_academic_year(self):
+        year = self.cleaned_data.get("academic_year", "").strip()
+        from academics.validators import validate_academic_year
+        return validate_academic_year(year)
+
+
+class TimetableGenerateForm(forms.Form):
+    """
+    Form for initiating AI Timetable generation with pre-generation configuration:
+    - Academic context (Semester, Division)
+    - Schedule settings (Working days, Daily start/end times, Slot duration, Lunch break)
+    - Optimization & constraint preferences (Practical periods, consecutive limits, gaps, distribution)
+    - Natural language instructions
+    """
+
+    DAY_CHOICES = [
+        ("MONDAY", "Monday"),
+        ("TUESDAY", "Tuesday"),
+        ("WEDNESDAY", "Wednesday"),
+        ("THURSDAY", "Thursday"),
+        ("FRIDAY", "Friday"),
+        ("SATURDAY", "Saturday"),
+    ]
+
+    PRACTICAL_PERIOD_CHOICES = [
+        ("ANY", "No Preference / Any Time"),
+        ("AFTERNOON", "Prefer Afternoon (12:00 - 16:00)"),
+        ("MORNING", "Prefer Morning (09:00 - 12:00)"),
+    ]
+
+    semester = forms.ModelChoiceField(
+        queryset=Semester.objects.select_related("program").all().order_by("program__name", "number"),
+        empty_label="Select Semester",
+        widget=forms.Select(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"}
+        ),
+    )
+    academic_year = forms.CharField(
+        max_length=9,
+        widget=forms.TextInput(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400", "placeholder": "e.g. 2025-2026"}
+        ),
+    )
+    division = forms.ModelChoiceField(
+        queryset=Division.objects.select_related("semester").all(),
+        required=False,
+        empty_label="All Divisions in Semester",
+        widget=forms.Select(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"}
+        ),
+    )
+
+    # Basic Schedule Settings
+    working_days = forms.MultipleChoiceField(
+        choices=DAY_CHOICES,
+        initial=["MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"],
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "rounded text-indigo-600 focus:ring-indigo-500"}),
+        required=True,
+    )
+    daily_start_time = forms.CharField(
+        initial="09:00",
+        widget=forms.TextInput(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white", "placeholder": "09:00"}
+        ),
+    )
+    daily_end_time = forms.CharField(
+        initial="17:00",
+        widget=forms.TextInput(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white", "placeholder": "17:00"}
+        ),
+    )
+    slot_duration_minutes = forms.IntegerField(
+        initial=60,
+        min_value=30,
+        max_value=180,
+        widget=forms.NumberInput(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white", "placeholder": "60"}
+        ),
+    )
+    lunch_break_start = forms.CharField(
+        required=False,
+        widget=forms.TextInput(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white", "placeholder": "e.g. 13:00"}
+        ),
+    )
+    lunch_break_end = forms.CharField(
+        required=False,
+        widget=forms.TextInput(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white", "placeholder": "e.g. 14:00"}
+        ),
+    )
+
+    # Preferences & Optimization toggles
+    prefer_practicals_period = forms.ChoiceField(
+        choices=PRACTICAL_PERIOD_CHOICES,
+        initial="AFTERNOON",
+        widget=forms.Select(
+            attrs={"class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"}
+        ),
+        required=False,
+    )
+    avoid_teacher_consecutive = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"}),
+    )
+    avoid_division_gaps = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"}),
+    )
+    subject_distribution = forms.BooleanField(
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"}),
+    )
+
+    # Natural Language Requirements
+    natural_language_requirements = forms.CharField(
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white placeholder-slate-400 font-mono text-xs",
+                "rows": 3,
+                "placeholder": "e.g. Keep practical sessions mostly in the afternoon and avoid more than 2 consecutive classes for a teacher.",
+            }
+        ),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # If semester is specified in bound or initial data, filter division choices
+        semester_id = None
+        if self.is_bound:
+            semester_id = self.data.get("semester")
+        elif "semester" in self.initial:
+            val = self.initial.get("semester")
+            semester_id = getattr(val, "id", val)
+
+        if semester_id:
+            self.fields["division"].queryset = Division.objects.filter(semester_id=semester_id)
+
+    def clean_academic_year(self):
+        year = self.cleaned_data.get("academic_year", "").strip()
+        from academics.validators import validate_academic_year
+        return validate_academic_year(year)
+
+    def clean(self):
+        cleaned_data = super().clean()
+        start = cleaned_data.get("daily_start_time", "").strip()
+        end = cleaned_data.get("daily_end_time", "").strip()
+        if start and end and start >= end:
+            self.add_error("daily_end_time", "Daily end time must be after start time.")
+
+        l_start = cleaned_data.get("lunch_break_start", "").strip()
+        l_end = cleaned_data.get("lunch_break_end", "").strip()
+        if (l_start and not l_end) or (l_end and not l_start):
+            self.add_error("lunch_break_end", "Both lunch break start and end times must be provided.")
+        elif l_start and l_end and l_start >= l_end:
+            self.add_error("lunch_break_end", "Lunch break end time must be after start time.")
+
+        return cleaned_data
+
+
+class TimetableSlotForm(forms.ModelForm):
+    """
+    Form for creating and editing individual TimetableSlot instances within a Timetable.
+    Enforces academic context scoping and resource constraints.
+    """
+
+    class Meta:
+        model = TimetableSlot
+        fields = [
+            "division",
+            "batch",
+            "subject",
+            "teacher",
+            "classroom",
+            "laboratory",
+            "day",
+            "start_time",
+            "end_time",
+            "session_type",
+            "status",
+        ]
+
+    def __init__(self, *args, timetable=None, **kwargs):
+        self.timetable = timetable or (kwargs.get("instance").timetable if kwargs.get("instance") else None)
+        super().__init__(*args, **kwargs)
+
+        select_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+        input_classes = "w-full px-3.5 py-2.5 text-sm text-slate-900 border border-slate-300 rounded-xl focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-600 outline-none transition duration-150 bg-white"
+
+        for field_name in ["division", "batch", "subject", "teacher", "classroom", "laboratory", "day", "session_type", "status"]:
+            if field_name in self.fields:
+                self.fields[field_name].widget.attrs.update({"class": select_classes})
+
+        self.fields["start_time"].widget = forms.TimeInput(
+            attrs={"class": input_classes, "type": "time"}
+        )
+        self.fields["end_time"].widget = forms.TimeInput(
+            attrs={"class": input_classes, "type": "time"}
+        )
+
+        self.fields["batch"].required = False
+        self.fields["classroom"].required = False
+        self.fields["laboratory"].required = False
+
+        if self.timetable:
+            # Scope division to timetable semester
+            self.fields["division"].queryset = Division.objects.filter(semester=self.timetable.semester).order_by("name")
+            # Scope batches
+            self.fields["batch"].queryset = PracticalBatch.objects.filter(division__semester=self.timetable.semester).select_related("division").order_by("division__name", "name")
+            # Scope subjects to program
+            self.fields["subject"].queryset = Subject.objects.filter(program=self.timetable.semester.program).order_by("name")
+        else:
+            self.fields["division"].queryset = Division.objects.select_related("semester").all()
+            self.fields["batch"].queryset = PracticalBatch.objects.select_related("division").all()
+            self.fields["subject"].queryset = Subject.objects.select_related("program").all()
+
+        self.fields["teacher"].queryset = TeacherProfile.objects.select_related("user", "department").filter(user__is_active=True).order_by("user__first_name", "user__last_name")
+        self.fields["classroom"].queryset = Classroom.objects.filter(status=Classroom.Status.AVAILABLE).order_by("building", "room_number")
+        self.fields["laboratory"].queryset = Laboratory.objects.filter(status=Laboratory.Status.AVAILABLE).order_by("building", "lab_number")
+
+    def clean(self):
+        cleaned_data = super().clean()
+        start_time = cleaned_data.get("start_time")
+        end_time = cleaned_data.get("end_time")
+        session_type = cleaned_data.get("session_type")
+        classroom = cleaned_data.get("classroom")
+        laboratory = cleaned_data.get("laboratory")
+        division = cleaned_data.get("division")
+        batch = cleaned_data.get("batch")
+
+        if start_time and end_time and start_time >= end_time:
+            self.add_error("end_time", "End time must be strictly after start time.")
+
+        if self.timetable and division and division.semester_id != self.timetable.semester_id:
+            self.add_error("division", "Selected division does not belong to the timetable's semester.")
+
+        if batch and division and batch.division_id != division.id:
+            self.add_error("batch", "Selected batch does not belong to the selected division.")
+
+        if session_type == TimetableSlot.SessionType.PRACTICAL:
+            if not laboratory and not classroom:
+                self.add_error("laboratory", "Practical sessions require an assigned laboratory.")
+        elif session_type in (TimetableSlot.SessionType.LECTURE, TimetableSlot.SessionType.TUTORIAL):
+            if not classroom and not laboratory:
+                self.add_error("classroom", "Lecture and tutorial sessions require an assigned classroom.")
+
+        return cleaned_data
+
+
+
+
 
 
 

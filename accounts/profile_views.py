@@ -11,6 +11,7 @@ from .profile_serializers import (
     StudentProfileCreateSerializer,
     StudentProfileSerializer,
     StudentProfileUpdateSerializer,
+    StudentSelfProfileCreateSerializer,
     TeacherMeUpdateSerializer,
     TeacherProfileCreateSerializer,
     TeacherProfileSerializer,
@@ -310,6 +311,22 @@ class StudentMeView(APIView):
                 "student": serializer.data,
             },
             status=status.HTTP_200_OK,
+        )
+
+    def post(self, request):
+        serializer = StudentSelfProfileCreateSerializer(
+            data=request.data,
+            context={"request": request},
+        )
+        serializer.is_valid(raise_exception=True)
+        student = serializer.save()
+        return Response(
+            {
+                "success": True,
+                "message": "Student profile created successfully.",
+                "student": StudentProfileSerializer(student).data,
+            },
+            status=status.HTTP_201_CREATED,
         )
 
     def patch(self, request):

@@ -733,3 +733,161 @@ class StudentMeUpdateSerializer(serializers.ModelSerializer):
             user.phone = validated_data["phone"]
         user.save()
         return instance
+
+
+class StudentSelfProfileCreateSerializer(serializers.Serializer):
+    """
+    Serializer used by authenticated self-registered Students to create their own StudentProfile.
+    """
+
+    roll_number = serializers.CharField(required=True, max_length=30)
+    student_code = serializers.CharField(required=False, allow_blank=True, max_length=30)
+    division = serializers.PrimaryKeyRelatedField(
+        queryset=Division.objects.all(),
+        required=True,
+    )
+    batch = serializers.PrimaryKeyRelatedField(
+        queryset=PracticalBatch.objects.all(),
+        required=False,
+        allow_null=True,
+        default=None,
+    )
+    admission_year = serializers.IntegerField(
+        required=False,
+        min_value=1900,
+        max_value=2100,
+        allow_null=True,
+    )
+    first_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=50,
+        validators=[validate_name_custom],
+    )
+    last_name = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        max_length=50,
+        validators=[validate_name_custom],
+    )
+    phone = serializers.CharField(
+        required=False,
+        allow_blank=True,
+        allow_null=True,
+        max_length=15,
+        validators=[validate_indian_phone],
+    )
+
+    def validate_roll_number(self, value):
+        cleaned = str(value).strip()
+        if not cleaned:
+            raise serializers.ValidationError("Roll number is required.")
+        return cleaned
+
+    def validate_first_name(self, value):
+        if not value:
+            return ""
+        cleaned = normalize_name(value)
+        validate_name_custom(cleaned)
+        return cleaned
+
+    def validate_last_name(self, value):
+        if not value:
+            return ""
+        cleaned = normalize_name(value)
+        validate_name_custom(cleaned)
+        return cleaned
+
+    def validate_phone(self, value):
+        if not value:
+            return None
+        cleaned = normalize_indian_phone(value)
+        validate_indian_phone(cleaned)
+        return cleaned
+
+    def validate(self, attrs):
+        user = self.context["request"].user
+        if hasattr(user, "student_profile") and user.student_profile is not None:
+            raise serializers.ValidationError(
+                {"detail": "Student profile already exists for this user."}
+            )
+
+        division = attrs.get("division")
+        batch = attrs.get("batch")
+        roll_number = attrs.get("roll_number")
+
+        # Roll number uniqueness within division
+        if division and roll_number:
+            if StudentProfile.objects.filter(
+                division=division, roll_number__iexact=roll_number
+            ).exists():
+                raise serializers.ValidationError(
+                    {"roll_number": "A student with this roll number already exists in this division."}
+                )
+
+        # Batch belongs to division
+        if batch and division and batch.division_id != division.id:
+            raise serializers.ValidationError(
+                {"batch": "The selected practical batch does not belong to the selected division."}
+            )
+
+        return attrs
+
+    def create(self, validated_data):
+        user = self.context["request"].user
+        first_name = validated_data.get("first_name")
+        last_name = validated_data.get("last_name")
+        phone = validated_data.get("phone")
+
+        user_updated = False
+        if first_name is not None:
+            user.first_name = first_name
+            user_updated = True
+        if last_name is not None:
+            user.last_name = last_name
+            user_updated = True
+        if phone is not None:
+            user.phone = phone
+            user_updated = True
+
+        division = validated_data["division"]
+        batch = validated_data.get("batch")
+        roll_number = validated_data["roll_number"]
+        student_code = validated_data.get("student_code")
+
+        if not student_code:
+            student_code = f"STU-{user.username}".upper()[:30]
+
+        # Auto-compute admission_year from division's semester or current year if omitted
+        admission_year = validated_data.get("admission_year")
+        if not admission_year:
+            if division.semester and division.semester.academic_year:
+                try:
+                    admission_year = int(division.semester.academic_year.split("-")[0])
+                except (ValueError, IndexError):
+                    admission_year = 2024
+            else:
+                admission_year = 2024
+
+        with transaction.atomic():
+            if user_updated:
+                user.save()
+
+            # Ensure student_code uniqueness
+            base_code = student_code
+            counter = 1
+            while StudentProfile.objects.filter(student_code__iexact=student_code).exists():
+                suffix = f"-{counter}"
+                student_code = f"{base_code[:30 - len(suffix)]}{suffix}"
+                counter += 1
+
+            student = StudentProfile.objects.create(
+                user=user,
+                student_code=student_code,
+                roll_number=roll_number,
+                division=division,
+                batch=batch,
+                admission_year=admission_year,
+                status=StudentProfile.Status.ACTIVE,
+            )
+            return student

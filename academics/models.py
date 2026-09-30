@@ -362,7 +362,37 @@ class Subject(models.Model):
         ]
 
     def __str__(self):
-        return f"{self.name} ({self.code}) - {self.get_type_display()}"
+        components = self.delivery_components_display
+        return f"{self.name} ({self.code}) - {components}"
+
+    @property
+    def has_lecture(self) -> bool:
+        return (self.weekly_lectures or 0) > 0 or self.type == self.Type.LECTURE
+
+    @property
+    def has_practical(self) -> bool:
+        return (self.weekly_practicals or 0) > 0 or self.type == self.Type.PRACTICAL
+
+    @property
+    def has_tutorial(self) -> bool:
+        return self.type == self.Type.TUTORIAL
+
+    @property
+    def delivery_components(self) -> list:
+        components = []
+        if (self.weekly_lectures or 0) > 0:
+            components.append("Lecture")
+        if (self.weekly_practicals or 0) > 0:
+            components.append("Practical")
+        if self.type == self.Type.TUTORIAL:
+            components.append("Tutorial")
+        if not components:
+            components.append(self.get_type_display())
+        return components
+
+    @property
+    def delivery_components_display(self) -> str:
+        return " + ".join(self.delivery_components)
 
     def clean(self):
         super().clean()
